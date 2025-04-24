@@ -1,18 +1,109 @@
 import streamlit as st 
 import sqlite3 
 import datetime 
+import time
 import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 import hashlib
 from components.drag_and_drop import drag_and_drop
 from streamlit_calendar import calendar
+from calendar_page import show_calendar_page
+from workspace_page import workspace_page
 import io  # For handling in-memory file buffers
 import logging
-
+import streamlit.components.v1 as components
+import json
+import base64
+import plotly.graph_objects as go
+from visualizations import ( 
+    plot_project_timeline, 
+    plot_budget_comparison,
+    plot_completion_heatmap,
+    plot_duration_variance,
+    plot_project_health,
+    plot_plan_vs_actual_gantt, 
+    plot_duration_variance,
+    plot_duration_comparison 
+)
 
 # Page Config (MUST BE THE FIRST STREAMLIT COMMAND)
 st.set_page_config(page_title="Project Management App", layout="wide")
+
+
+# Add this after your page config
+components.html("""
+<script>
+    // Function to handle navigation from cards
+    function navigateToPage(page) {
+        window.parent.postMessage({
+            streamlit: {
+                type: 'streamlit:componentMessage',
+                data: {page: page}
+            }
+        }, '*');
+    }
+</script>
+""", height=0)
+
+
+
+# Add this right after the page config
+st.markdown("""
+<style>
+   /* Uniform button styling */
+    .stButton>button {
+        width: 200px !important;
+        height: 42px !important;
+        margin: 8px auto !important;
+        display: block !important;
+        background-color: #E1F0FF !important;
+        color: #2c3e50 !important;
+        border: 1px solid #B8D4FF !important;
+        border-radius: 8px !important;
+        transition: all 0.2s ease !important;
+    }
+               
+            
+    .stButton>button:hover {
+        background-color: #D0E2FF !important;
+        transform: translateY(-1px) !important;
+    }
+    
+    .stButton>button[kind="primary"] {
+        background-color: #4E8BF5 !important;
+        color: white !important;
+        box-shadow: 0 2px 8px rgba(78, 139, 245, 0.3) !important;
+    }
+
+    /* Ensures all columns use same spacing */
+    [data-testid="column"] {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }        
+
+    /* Remove default sidebar padding */
+    [data-testid="stSidebar"] > div:first-child {
+        padding-top: 0 !important;
+    }
+    
+    /* Ensure title sticks to top */
+    .stSidebar .stMarkdown:first-child {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }        
+
+            /* Workspace icon styling */
+    .stButton>button[kind="secondary"] div div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+</style>
+""", unsafe_allow_html=True)
+
+
 
 
 # Define priority colors
@@ -26,15 +117,40 @@ priority_colors = {
 # Initialize session state for color scheme
 if "color_scheme" not in st.session_state:
     st.session_state.color_scheme = {
-        "primary": "#4CAF50",  # Green
-        "secondary": "#2196F3",  # Blue
-        "background": "#FFFFFF",  # White
-        "text": "#000000",  # Black
-    } 
+        "primary": "#4E8BF5",  # Cool blue
+        "secondary": "#6BB9F0",  # Light blue
+        "background": "#F5F9FF",  # Very light blue
+        "text": "#333333",  # Dark gray for text
+        "card": "#FFFFFF",  # White for cards
+        "popup": "#FFFFFF"  # White for popups
+    }
 
 # Custom CSS
 custom_css = f"""
 <style>
+/* Profile section styling */
+    .sidebar-profile {{
+        display: flex;
+        align-items: center;
+        padding: 0.5rem 0;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid #e0e0e0;
+    }}
+    .profile-pic {{
+        border-radius: 50%;
+        object-fit: cover;
+        margin-right: 1rem;
+    }}
+    .profile-name {{
+        font-weight: 600;
+        margin-bottom: 0;
+    }}
+    .profile-role {{
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 0;
+    }}
+
     /* General App Styling */
     .stApp {{
         background-color: {st.session_state.color_scheme['background']};
@@ -130,6 +246,47 @@ st.markdown(custom_css, unsafe_allow_html=True)
 
 
 
+# Add this to your existing CSS section (after the existing card styles)
+st.markdown("""
+<style>
+    /* Dashboard metric cards - matching admin style */
+    .dashboard-metric-card {
+        background-color: #FFFFFF;
+        border-radius: 10px;
+        padding: 1.2rem;
+        border-left: 4px solid;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        height: 100%;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    .dashboard-metric-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .dashboard-metric-card .metric-title {
+        display: flex; 
+        align-items: center; 
+        margin-bottom: 8px;
+    }
+    .dashboard-metric-card .metric-icon {
+        font-size: 1.5rem; 
+        margin-right: 8px;
+    }
+    .dashboard-metric-card .metric-name {
+        font-size: 0.9rem; 
+        color: #666;
+    }
+    .dashboard-metric-card .metric-value {
+        font-size: 1.8rem; 
+        font-weight: 700; 
+        color: #2c3e50; 
+        margin: 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
 
 # Database Initialization
 def init_db():
@@ -176,6 +333,17 @@ def init_db():
             FOREIGN KEY (assigned_to) REFERENCES users (id)
         )
     ''')
+
+
+    
+    # Check if the actual_time_spent column exists, and if not, add to the tasks table:
+    c.execute("PRAGMA table_info(tasks)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+
+    if 'actual_time_spent' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_time_spent REAL')  # Add actual_time_spent column
+       
     
     # Check if the start_date column exists, and if not, add it
     c.execute("PRAGMA table_info(tasks)")
@@ -183,9 +351,37 @@ def init_db():
     column_names = [column[1] for column in columns]
 
     if 'start_date' not in column_names:
-        c.execute('ALTER TABLE tasks ADD COLUMN start_date TEXT')  
+        c.execute('ALTER TABLE tasks ADD COLUMN start_date TEXT') 
+
+    # In the init_db function, add these columns to the tasks table:
+    if 'actual_start_date' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_start_date TEXT')  
+    if 'actual_deadline' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_deadline TEXT')     
         
+        # Check if the budget column exists, and if not, add it
+    c.execute("PRAGMA table_info(tasks)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
     
+    if 'budget' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN budget REAL') 
+
+
+    # Check if the actual_cost and budget_variance columns exist, and if not, add them
+    c.execute("PRAGMA table_info(tasks)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'actual_cost' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_cost REAL')  # Add actual_cost column
+    
+    if 'budget_variance' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN budget_variance REAL')  # Add budget_variance column
+
+
+
+
     
     c.execute('''
         CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -241,6 +437,15 @@ def init_db():
         )
     ''')
     
+    # Add this new table for storing app settings
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            setting_name TEXT UNIQUE,
+            setting_value BLOB
+        )
+    ''')
+
     # Create users table with additional columns
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -256,9 +461,90 @@ def init_db():
             email TEXT,       -- New: Email
             phone TEXT        -- New: Phone
             profile_picture BLOB  -- New: Profile Picture (stored as binary data)  
+            last_login TEXT,  -- New: Last login timestamp
+            login_count INTEGER DEFAULT 0,  -- New: Total logins
+            is_active BOOLEAN DEFAULT 1  -- New: Active status
+              
         )
     ''')
+
+    # Create table discussion topics
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS discussion_topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            topic TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        
+         )
+    ''')
     
+    # Create table discussion messages
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS discussion_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (topic_id) REFERENCES discussion_topics(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        
+         )
+    ''')
+
+
+
+
+    # Check if the project_id column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'project_id' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN project_id INTEGER') 
+
+
+    # Check if the uploaded_by column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'uploaded_by' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_by INTEGER') 
+
+
+    # Check if the uploader_name column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'uploader_name' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploader_name TEXT')  
+
+
+    # Check if the uploaded_at column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'uploaded_at' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_at TEXT')
+   
+   
+    # Check if the is_archived column exists, and if not, add it
+    # c.execute("PRAGMA table_info(discussion_topics)")
+    # columns = c.fetchall()
+    # column_names = [column[1] for column in columns]
+    
+    # if 'is_archieved' not in column_names:
+    #     c.execute('ALTER TABLE discussion_topics ADD COLUMN is_archived INTEGER DEFAULT 0') 
+
+
+
     # Check if the new columns exist, and if not, add them
     c.execute("PRAGMA table_info(users)")
     columns = c.fetchall()
@@ -280,25 +566,23 @@ def init_db():
             c.execute(f'ALTER TABLE users ADD COLUMN {column_name} {column_type}')
 
     
-    # Check if the budget column exists, and if not, add it
-    c.execute("PRAGMA table_info(tasks)")
+
+
+
+    # Check if the uploaded_by, uploaded_at and file_size columns exist, and if not, add them
+    c.execute("PRAGMA table_info(attachments)")
     columns = c.fetchall()
     column_names = [column[1] for column in columns]
     
-    if 'budget' not in column_names:
-        c.execute('ALTER TABLE tasks ADD COLUMN budget REAL') 
-
-
-    # Check if the actual_cost and budget_variance columns exist, and if not, add them
-    c.execute("PRAGMA table_info(tasks)")
-    columns = c.fetchall()
-    column_names = [column[1] for column in columns]
+    if 'uploaded_by' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_by INTEGER')  # Add uploaded_by column
     
-    if 'actual_cost' not in column_names:
-        c.execute('ALTER TABLE tasks ADD COLUMN actual_cost REAL')  # Add actual_cost column
-    
-    if 'budget_variance' not in column_names:
-        c.execute('ALTER TABLE tasks ADD COLUMN budget_variance REAL')  # Add budget_variance column
+    if 'uploaded_at' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_at ')  # Add uploaded_at column
+
+    if 'file_size' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN file_size INTEGER')  # Add file_size column
+
 
 
     conn.commit()
@@ -328,114 +612,185 @@ init_db()
 
 # Helper function to fetch projects
 def fetch_tasks(project_id=None):
-    """
-    Fetch tasks from the database and return them as a Pandas DataFrame.
-    If project_id is provided, fetch tasks for that specific project.
-    """
+    """Fetch tasks with calculated budget variance and time tracking"""
     if project_id:
         query = """
             SELECT 
                 t.title AS Task, 
                 t.status, 
-                u.username AS assignee, 
-                t.time_spent AS "Spent Time", 
+                assignee.username AS assignee, 
+                t.time_spent AS "Planned Time Spent", 
+                t.actual_time_spent AS "Actual Time Spent",
                 p.name AS Project, 
-                t.start_date AS "Start Date",
-                t.deadline AS "Deadline",
-                (julianday(t.deadline) - julianday(t.start_date)) AS "Duration (days)",
+                owner.username AS "Project Owner",  
+                t.start_date AS "Planned Start Date",
+                t.deadline AS "Planned Deadline",
+                CASE 
+                    WHEN t.start_date IS NULL OR t.deadline IS NULL THEN 'N/A'
+                    ELSE ROUND(julianday(t.deadline) - julianday(t.start_date), 1) || ' days'
+                END AS "Planned Duration",
+                t.actual_start_date AS "Actual Start Date",
+                t.actual_deadline AS "Actual Deadline",
+                CASE 
+                    WHEN t.actual_start_date IS NULL OR t.actual_deadline IS NULL THEN 'N/A'
+                    ELSE ROUND(julianday(t.actual_deadline) - julianday(t.actual_start_date), 1) || ' days'
+                END AS "Actual Duration",
                 t.priority AS Priority,
                 t.budget AS Budget,
                 t.actual_cost AS "Actual Cost",
-                t.budget_variance AS "Budget Variance"
+                CASE 
+                    WHEN t.budget IS NULL OR t.actual_cost IS NULL THEN NULL
+                    ELSE t.budget - t.actual_cost 
+                END AS "Budget Variance"
             FROM tasks t
-            LEFT JOIN users u ON t.assigned_to = u.id
+            LEFT JOIN users assignee ON t.assigned_to = assignee.id
             LEFT JOIN projects p ON t.project_id = p.id
+            LEFT JOIN users owner ON p.user_id = owner.id
             WHERE t.project_id = ?
         """
         tasks = query_db(query, (project_id,))
     else:
-        if st.session_state.user_role == "Admin":
-            # Admin can see all tasks
-            query = """
-                SELECT 
-                    t.title AS Task, 
-                    t.status, 
-                    u.username AS assignee, 
-                    t.time_spent AS "Spent Time", 
-                    p.name AS Project, 
-                    t.start_date AS "Start Date",
-                    t.deadline AS "Deadline",
-                    (julianday(t.deadline) - julianday(t.start_date)) AS "Duration (days)",
-                    t.priority AS Priority,
-                    t.budget AS Budget,
-                    t.actual_cost AS "Actual Cost",
-                    t.budget_variance AS "Budget Variance"
-                FROM tasks t
-                LEFT JOIN users u ON t.assigned_to = u.id
-                LEFT JOIN projects p ON t.project_id = p.id
-            """
-            tasks = query_db(query)
-        else:
-            # Regular users can see tasks assigned to them or tasks in their projects
-            query = """
-                SELECT 
-                    t.title AS Task, 
-                    t.status, 
-                    u.username AS assignee, 
-                    t.time_spent AS "Spent Time", 
-                    p.name AS Project, 
-                    t.start_date AS "Start Date",
-                    t.deadline AS "Deadline",
-                    (julianday(t.deadline) - julianday(t.start_date)) AS "Duration (days)",
-                    t.priority AS Priority,
-                    t.budget AS Budget,
-                    t.actual_cost AS "Actual Cost",
-                    t.budget_variance AS "Budget Variance"
-                FROM tasks t
-                LEFT JOIN users u ON t.assigned_to = u.id
-                LEFT JOIN projects p ON t.project_id = p.id
-                WHERE t.assigned_to = ? OR p.user_id = ?
-            """
-            tasks = query_db(query, (st.session_state.user_id, st.session_state.user_id))
+        query = """
+            SELECT 
+                t.title AS Task, 
+                t.status, 
+                assignee.username AS assignee, 
+                t.time_spent AS "Planned Time Spent", 
+                t.actual_time_spent AS "Actual Time Spent",
+                p.name AS Project, 
+                owner.username AS "Project Owner",  
+                t.start_date AS "Planned Start Date",
+                t.deadline AS "Planned Deadline",
+                CASE 
+                    WHEN t.start_date IS NULL OR t.deadline IS NULL THEN 'N/A'
+                    ELSE ROUND(julianday(t.deadline) - julianday(t.start_date), 1) || ' days'
+                END AS "Planned Duration",
+                t.actual_start_date AS "Actual Start Date",
+                t.actual_deadline AS "Actual Deadline",
+                CASE 
+                    WHEN t.actual_start_date IS NULL OR t.actual_deadline IS NULL THEN 'N/A'
+                    ELSE ROUND(julianday(t.actual_deadline) - julianday(t.actual_start_date), 1) || ' days'
+                END AS "Actual Duration",
+                t.priority AS Priority,
+                t.budget AS Budget,
+                t.actual_cost AS "Actual Cost",
+                CASE 
+                    WHEN t.budget IS NULL OR t.actual_cost IS NULL THEN NULL
+                    ELSE t.budget - t.actual_cost 
+                END AS "Budget Variance"
+            FROM tasks t
+            LEFT JOIN users assignee ON t.assigned_to = assignee.id
+            LEFT JOIN projects p ON t.project_id = p.id
+            LEFT JOIN users owner ON p.user_id = owner.id
+        """
+        tasks = query_db(query)
     
-    # Convert the result to a Pandas DataFrame
-    df = pd.DataFrame(tasks, columns=[
-        "Task", "Status", "Assignee", "Spent Time", "Project", "Start Date", "Deadline", "Duration (days)", "Priority", "Budget", "Actual Cost", "Budget Variance"
+    return pd.DataFrame(tasks, columns=[
+        "Task", "Status", "Assignee", "Planned Time Spent", "Actual Time Spent",
+        "Project", "Project Owner", "Planned Start Date", "Planned Deadline", 
+        "Planned Duration", "Actual Start Date", "Actual Deadline", "Actual Duration",
+        "Priority", "Budget", "Actual Cost", "Budget Variance"
     ])
-    return df
-
 
 
 
 
 def display_task_table():
-    """
-    Display tasks in a table format using Streamlit.
-    Allow filtering by project.
-    """
-    # Fetch all projects for the logged-in user
-    projects = query_db("SELECT id, name FROM projects WHERE user_id=?", (st.session_state.user_id,))
-    project_names = [project[1] for project in projects]
-    project_names.insert(0, "All Projects")  
-
-    # Add a project filter dropdown
-    selected_project = st.selectbox("Filter by Project", project_names)
+    """Display tasks in a table format with filtering capabilities"""
+    # Fetch tasks with the updated function
+    tasks_df = fetch_tasks()
     
-    # Fetch tasks based on the selected project
-    if selected_project == "All Projects":
-        tasks_df = fetch_tasks()  
-    else:
-        project_id = query_db("SELECT id FROM projects WHERE name=?", (selected_project,), one=True)[0]
-        tasks_df = fetch_tasks(project_id)  
-    
-    # Display the table
     if tasks_df.empty:
         st.warning("No tasks found.")
-    else:
-        st.dataframe(tasks_df)  
+        return tasks_df
     
-    return tasks_df     
+    # Convert date columns
+    tasks_df['Planned Start Date'] = pd.to_datetime(tasks_df['Planned Start Date'])
+    tasks_df['Planned Deadline'] = pd.to_datetime(tasks_df['Planned Deadline'])
+    tasks_df['Actual Start Date'] = pd.to_datetime(tasks_df['Actual Start Date'])
+    tasks_df['Actual Deadline'] = pd.to_datetime(tasks_df['Actual Deadline'])
+    
+    # Create filter widgets
+    with st.expander("🔍 Filter Tasks", expanded=False):
+        col1, col2, col3, col4, col5 = st.columns(5)
         
+        with col1:
+            project_options = ['All Projects'] + sorted(tasks_df['Project'].unique().tolist())
+            selected_project = st.selectbox("Filter by Project", project_options)
+        
+        with col2:
+            assignee_options = ['All Assignees'] + sorted(tasks_df['Assignee'].dropna().unique().tolist())
+            selected_assignee = st.selectbox("Filter by Assignee", assignee_options)
+        
+        with col3:
+            status_options = ['All Statuses'] + sorted(tasks_df['Status'].unique().tolist())
+            selected_status = st.selectbox("Filter by Status", status_options)
+        
+        with col4:
+            priority_options = ['All Priorities'] + sorted(tasks_df['Priority'].unique().tolist())
+            selected_priority = st.selectbox("Filter by Priority", priority_options)
+
+        with col5:
+            owner_options = ['All Owners'] + sorted(tasks_df['Project Owner'].dropna().unique().tolist())
+            selected_owner = st.selectbox("Filter by Project Owner", owner_options)
+    
+    # Apply filters
+    filtered_df = tasks_df.copy()
+    
+    if selected_project != 'All Projects':
+        filtered_df = filtered_df[filtered_df['Project'] == selected_project]
+    
+    if selected_assignee != 'All Assignees':
+        filtered_df = filtered_df[filtered_df['Assignee'] == selected_assignee]
+    
+    if selected_status != 'All Statuses':
+        filtered_df = filtered_df[filtered_df['Status'] == selected_status]
+    
+    if selected_priority != 'All Priorities':
+        filtered_df = filtered_df[filtered_df['Priority'] == selected_priority]
+
+    if selected_owner != 'All Owners':
+        filtered_df = filtered_df[filtered_df['Project Owner'] == selected_owner]
+    
+    # Create a copy for display with formatted currency values
+    display_df = filtered_df.copy()
+    
+    
+
+ 
+    # Format currency columns as whole numbers
+    display_df["Actual Cost"] = display_df["Actual Cost"].apply(
+        lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+    )
+    display_df["Budget Variance"] = display_df["Budget Variance"].apply(
+        lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+    )
+    display_df["Budget"] = display_df["Budget"].apply(
+        lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+    )    
+    
+    
+    
+    
+    # Display the formatted table
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        column_config={
+            "Planned Start Date": st.column_config.DateColumn("Planned Start Date"),
+            "Planned Deadline": st.column_config.DateColumn("Planned Deadline"),
+            "Actual Start Date": st.column_config.DateColumn("Actual Start Date"),
+            "Actual Deadline": st.column_config.DateColumn("Actual Deadline"),
+            "Spent Time": st.column_config.NumberColumn("Spent Time (hours)"),
+            # Note: We don't need column_config for the currency columns 
+            # because we've already formatted them as strings
+        }
+    )
+    
+    # Return the original numeric DataFrame for visualizations
+    return filtered_df
+
+
 
 # Helper Functions
 def hash_password(password):
@@ -449,18 +804,15 @@ def verify_password(stored_password, provided_password):
 
 
 
-
-
 # Helper function to display projects as cards
 def display_projects_as_cards():
-    """Display professional project cards with properly contained buttons."""
+    """Display projects in a professional dropdown interface for selection and management"""
     # Fetch all users for owner dropdown
     users = query_db("SELECT id, username FROM users")
     user_options = {user[0]: user[1] for user in users}
 
     projects = query_db("""
-        SELECT id, user_id, name, description, 
-               start_date, end_date, budget 
+        SELECT id, user_id, name, description, start_date, end_date, budget 
         FROM projects
     """)
     
@@ -473,156 +825,145 @@ def display_projects_as_cards():
         st.success("✓ Project updated successfully!")
         del st.session_state['show_edit_success']
 
-    # State tracking
-    st.session_state.setdefault('editing_project_id', None)
-    st.session_state.setdefault('deleting_project_id', None)
-
-    # Custom CSS for the cards
-    st.markdown("""
-    <style>
-        .project-card {
-            border-radius: 8px;
-            padding: 15px;
-            margin: 10px 0;
-            background: white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    # Professional Project Selection Dropdown
+    st.subheader("Project Management")
+    project_options = {p[0]: f"{p[2]} (ID: {p[0]})" for p in projects}
+    selected_project_id = st.selectbox(
+        "Select Project to Manage",
+        options=list(project_options.keys()),
+        format_func=lambda x: project_options[x],
+        placeholder="Choose a project...",
+        key="project_selector"
+    )
+    
+    # Get the selected project
+    selected_project = next((p for p in projects if p[0] == selected_project_id), None)
+    
+    if selected_project:
+        project_id, owner_id, name, description, start_date, end_date, budget = selected_project
+        owner_username = user_options.get(owner_id, "Unknown")
+        
+        # Format budget display safely
+        budget_display = "Not set"
+        if budget is not None:
+            try:
+                budget_display = f"${float(budget):,.2f}"
+            except (TypeError, ValueError):
+                budget_display = "Invalid value"
+        
+        # Check if project is overdue
+        today = datetime.now().date()
+        end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else today
+        is_overdue = end_date_obj < today
+        
+        # Project Details Card with conditional coloring
+        card_style = """
             border: 1px solid #e0e0e0;
-            border-left: 4px solid #a8e6a8;  /* Light green divider */
-        }
-        .project-title {
-            color: #2c3e50;
-            margin-bottom: 10px;
-            font-size: 1.2rem;
-        }
-        .project-detail {
-            margin: 8px 0;
-            color: #34495e;
-            font-size: 14px;
-        }
-        .budget-value {
-            font-weight: bold;
-            color: #27ae60;
-        }
-        .card-buttons {
-            display: flex;
-            justify-content: flex-end;
-            gap: 10px;
-            margin-top: 15px;
-            padding-top: 10px;
-            border-top: 1px solid #f0f0f0;
-        }
-        .stButton button {
-            min-width: 80px;
-            padding: 6px 12px;
-            font-size: 13px;
-            margin: 0;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        """
+        
+        if is_overdue:
+            card_style = """
+                border-left: 4px solid #ff4d4d;
+                border-radius: 8px;
+                padding: 16px;
+                margin: 16px 0;
+                background: #fff5f5;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            """
+        
+        with st.container():
+            st.markdown(f"""
+            <div style="{card_style}">
+                <h3 style="margin-top:0;color:#2c3e50;">{name}</h3>
+                <p><strong>Description:</strong> {description or "No description"}</p>
+                <p><strong>Owner:</strong> {owner_username}</p>
+                <p><strong>Start Date:</strong> {start_date}</p>
+                <p><strong>Due Date:</strong> <span style="color: {'#ff4d4d' if is_overdue else 'inherit'}">{end_date}</span></p>
+                <p><strong>Status:</strong> {'<span style="color:#ff4d4d">⚠️ Overdue</span>' if is_overdue else 'On track'}</p>
+                <p><strong>Budget:</strong> {budget_display}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Action Buttons - Only show if admin or project owner
+            show_edit = st.session_state.user_role == "Admin" or owner_id == st.session_state.user_id
+            show_delete = st.session_state.user_role == "Admin"
+            
+            if show_edit or show_delete:
+                cols = st.columns([1,1,2])
+                with cols[0]:
+                    if show_edit and st.button("✏️ Edit Project", key=f"edit_{project_id}"):
+                        st.session_state.editing_project_id = project_id
+                        st.rerun()
+                with cols[1]:
+                    if show_delete and st.button("🗑️ Delete Project", type="primary", key=f"delete_{project_id}"):
+                        st.session_state.deleting_project_id = project_id
+                        st.rerun()
 
-    # Create cards using Streamlit columns and containers
-    for project in projects:
-        try:
-            project_id, owner_id, name, description, start_date, end_date, budget = project
-            owner_username = user_options.get(owner_id, "Unknown")
-            
-            # Format budget
-            budget_display = f"${float(budget):,.2f}" if budget else "Not set"
-            
-            # Permission checks
-            is_admin = st.session_state.user_role == "Admin"
-            is_owner = owner_id == st.session_state.user_id
-            
-            # Create card container
-            with st.container():
-                # Card content
-                st.markdown(f'<div class="project-card">', unsafe_allow_html=True)
+        # Edit Form
+        if st.session_state.get('editing_project_id') == project_id and show_edit:
+            with st.form(f"edit_form_{project_id}"):
+                st.subheader(f"Edit Project: {name}")
+                new_name = st.text_input("Name", value=name)
+                new_desc = st.text_area("Description", value=description)
                 
-                # Title
-                st.markdown(f'<div class="project-title">{name}</div>', unsafe_allow_html=True)
+                if st.session_state.user_role == "Admin":
+                    current_owner_name = user_options.get(owner_id, "Unknown")
+                    new_owner_name = st.selectbox(
+                        "Owner",
+                        options=list(user_options.values()),
+                        index=list(user_options.values()).index(current_owner_name) if current_owner_name in user_options.values() else 0
+                    )
+                    new_owner_id = [uid for uid, uname in user_options.items() if uname == new_owner_name][0]
+                else:
+                    new_owner_id = owner_id
                 
-                # Details
-                st.markdown(f'<div class="project-detail"><strong>Description:</strong> {description or "No description"}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="project-detail"><strong>Owner:</strong> {owner_username}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="project-detail"><strong>Start Date:</strong> {start_date}</div>', unsafe_allow_html=True)  # Separate row
-                st.markdown(f'<div class="project-detail"><strong>Due Date:</strong> {end_date}</div>', unsafe_allow_html=True)  # Separate row
-                st.markdown(f'<div class="project-detail"><strong>Budget:</strong> <span class="budget-value">{budget_display}</span></div>', unsafe_allow_html=True)
-                
-                # Buttons container
-                st.markdown('<div class="card-buttons">', unsafe_allow_html=True)
-                
-                # Action buttons
-                if (is_admin or is_owner) and st.session_state.editing_project_id != project_id and st.session_state.deleting_project_id != project_id:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("Edit", key=f"edit_{project_id}"):
-                            st.session_state.editing_project_id = project_id
-                            st.rerun()
-                    with col2:
-                        if is_admin and st.button("Delete", key=f"delete_{project_id}"):
-                            st.session_state.deleting_project_id = project_id
-                            st.rerun()
-                
-                # Close containers
-                st.markdown("</div></div>", unsafe_allow_html=True)
-
-            # Delete confirmation
-            if st.session_state.deleting_project_id == project_id:
-                st.warning(f"Delete project '{name}'?")
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("Confirm", key=f"confirm_{project_id}"):
-                        delete_project(project_id)
-                        st.success("Project deleted")
-                        st.session_state.deleting_project_id = None
+                    new_start = st.date_input("Start Date", value=datetime.strptime(start_date, "%Y-%m-%d").date())
+                with col2:
+                    new_end = st.date_input("Due Date", value=datetime.strptime(end_date, "%Y-%m-%d").date())
+                
+                new_budget = st.number_input("Budget", value=float(budget) if budget else 0.0, step=0.01)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.form_submit_button("💾 Save Changes"):
+                        query_db("""
+                            UPDATE projects SET 
+                            name=?, description=?, user_id=?, 
+                            start_date=?, end_date=?, budget=?
+                            WHERE id=?
+                        """, (new_name, new_desc, new_owner_id, 
+                              new_start, new_end, new_budget, project_id))
+                        st.session_state.show_edit_success = True
+                        st.session_state.editing_project_id = None
                         st.rerun()
                 with col2:
-                    if st.button("Cancel", key=f"cancel_{project_id}"):
-                        st.session_state.deleting_project_id = None
+                    if st.form_submit_button("❌ Cancel"):
+                        st.session_state.editing_project_id = None
                         st.rerun()
 
-            # Edit form
-            if st.session_state.editing_project_id == project_id:
-                with st.form(f"edit_form_{project_id}"):
-                    st.subheader(f"Edit Project: {name}")
-                    new_name = st.text_input("Name", value=name)
-                    new_desc = st.text_area("Description", value=description)
-                    
-                    if st.session_state.user_role == "Admin":
-                        current_owner_name = user_options.get(owner_id, "Unknown")
-                        new_owner_name = st.selectbox(
-                            "Owner",
-                            options=list(user_options.values()),
-                            index=list(user_options.values()).index(current_owner_name)
-                        )
-                        new_owner_id = [uid for uid, uname in user_options.items() if uname == new_owner_name][0]
-                    else:
-                        new_owner_id = owner_id
-                    
-                    new_start = st.date_input("Start Date", value=datetime.strptime(start_date, "%Y-%m-%d").date())
-                    new_end = st.date_input("Due Date", value=datetime.strptime(end_date, "%Y-%m-%d").date())
-                    new_budget = st.number_input("Budget", value=float(budget) if budget else 0.0, step=0.01)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.form_submit_button("Save"):
-                            query_db("""
-                                UPDATE projects SET 
-                                name=?, description=?, user_id=?, 
-                                start_date=?, end_date=?, budget=?
-                                WHERE id=?
-                            """, (new_name, new_desc, new_owner_id, 
-                                  new_start, new_end, new_budget, project_id))
-                            st.session_state.show_edit_success = True
-                            st.session_state.editing_project_id = None
-                            st.rerun()
-                    with col2:
-                        if st.form_submit_button("Cancel"):
-                            st.session_state.editing_project_id = None
-                            st.rerun()
-
-        except Exception as e:
-            st.error(f"Error loading project: {str(e)}")
+        # Delete Confirmation
+        if st.session_state.get('deleting_project_id') == project_id and show_delete:
+            st.warning(f"⚠️ Delete project '{name}'? This action cannot be undone!")
+            st.error("All associated tasks and data will be permanently deleted!")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ Confirm Deletion", type="primary"):
+                    delete_project(project_id)
+                    st.success("Project deleted successfully")
+                    st.session_state.deleting_project_id = None
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel"):
+                    st.session_state.deleting_project_id = None
+                    st.rerun()
                                    
                 
         
@@ -671,6 +1012,20 @@ if "show_help" not in st.session_state:
     st.session_state.show_help = False  # Track help visibility
 if "breadcrumbs" not in st.session_state:
     st.session_state.breadcrumbs = []  # Initialize breadcrumbs
+if "page" not in st.session_state:
+    st.session_state.page = "Dashboard"  # Default page
+if "editing_task_id" not in st.session_state:
+    st.session_state.editing_task_id = None
+if "editing_task_project" not in st.session_state:
+    st.session_state.editing_task_project = None
+# if 'page_navigation' not in st.session_state:
+#     st.session_state.page_navigation = None
+
+# if 'username' not in st.session_state:
+#     st.session_state.username = None
+
+if "show_welcome" not in st.session_state:
+    st.session_state.show_welcome = True
 if "color_scheme" not in st.session_state:
     # Initialize color_scheme with a default value
     st.session_state.color_scheme = {
@@ -711,7 +1066,6 @@ else:
 
 
 
-
 # Custom CSS
 custom_css = f"""
 <style>
@@ -732,40 +1086,441 @@ custom_css = f"""
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# Sidebar Navigation
-st.sidebar.title("📊 Navigation")
 
-# Logout Button
+
+# User Profile Picture & Name Section at the top
+
+with st.sidebar:
+    # User Profile Section at the top - Perfectly aligned version
+    if st.session_state.authenticated:
+        user = query_db("""
+            SELECT username, first_name, last_name, profile_picture, job_title 
+            FROM users WHERE id=?
+        """, (st.session_state.user_id,), one=True)
+        
+        if user:
+            # Main container with perfect alignment
+            st.markdown(f"""
+            <div style="
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 0;
+                margin: -0.5rem 0 0.5rem 0;
+                width: 100%;
+            ">
+            """, unsafe_allow_html=True)
+            
+            # Profile picture container (no unwanted blue circle)
+            if user[3]:  # If profile picture exists
+                st.markdown(f"""
+                <div style="
+                    width: 60px;
+                    height: 60px;
+                    border-radius: 50%;
+                    overflow: hidden;
+                    margin: 0 auto 8px auto;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: #f8f9fa;    
+                ">
+                    <img src="data:image/png;base64,{base64.b64encode(user[3]).decode()}" 
+                         style="width:100%; height:100%; object-fit: cover;"/>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                # Display initials if no picture (with consistent styling)
+                initials = ""
+                if user[1] and user[2]:
+                    initials = f"{user[1][0]}{user[2][0]}".upper()
+                elif user[0]:
+                    initials = user[0][0:2].upper()
+                
+                st.markdown(f"""
+                <div style="
+                    width: 60px;
+                    height: 60px;
+                    border-radius: 50%;
+                    background: #f0f0f0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 0 auto 8px auto;
+                    color: {st.session_state.color_scheme['primary']};
+                    font-size: 1.25rem;
+                    font-weight: bold;
+                ">{initials}</div>
+                """, unsafe_allow_html=True)
+            
+            # Display name and title (perfectly centered)
+            display_name = f"{user[1]} {user[2]}" if (user[1] and user[2]) else user[0]
+            title = user[4] if user[4] else st.session_state.user_role
+            
+            st.markdown(f"""
+            <div style="
+                text-align: center;
+                width: 100%;
+                padding: 0;
+                margin: 0;
+            ">
+                <p style="
+                    margin: 0 0 2px 0;
+                    padding: 0;
+                    font-weight: 600;
+                    color: #2c3e50;
+                    font-size: 1rem;
+                    line-height: 1.2;
+                ">{display_name}</p>
+                <p style="
+                    margin: 0;
+                    padding: 0;
+                    font-size: 0.8rem;
+                    color: #666;
+                    line-height: 1.2;
+                ">{title}</p>
+            </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Custom divider that matches sidebar style
+        st.markdown("""
+        <div style="
+            height: 1px;
+            width: calc(100% - 1rem);
+            background-color: rgba(0,0,0,0.1);
+            margin: 0.75rem auto;
+        "></div>
+        """, unsafe_allow_html=True)
+
+        # Rest of your sidebar content
+        # App Title (adjusted spacing)
+        st.markdown("""
+        <div style='text-align: center;
+                    margin: 0 0 1rem 0;
+                    padding-top: 0;
+                    font-size: 1.5rem;
+                    font-weight: bold;
+                    color: #2c3e50;'>
+            Project App
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# 2. MENU TITLE (only appears when authenticated)
+        if st.session_state.authenticated:
+            st.markdown("""
+            <div style='text-align: center;
+                        margin: 1rem 0 0.5rem 0;
+                        font-size: 1.1rem;
+                        color: #4E8BF5;
+                        font-weight: 600;'>
+                Menu
+            </div>
+            """, unsafe_allow_html=True)
+
+
+
+
+# Only show full navigation if authenticated
 if st.session_state.authenticated:
-    if st.sidebar.button("🚪 Logout"):
-        st.session_state.authenticated = False
-        st.session_state.user_id = None
-        st.session_state.user_role = None
-        st.session_state.breadcrumbs = []  # Clear breadcrumbs on logout
-        st.success("You have been logged out.")
+    # Define menu items based on user role
+    if st.session_state.user_role == "Admin":
+        menu_items = [
+            {"icon": "🏠", "label": "Dashboard", "page": "Dashboard"},
+            {"icon": "📂", "label": "Projects", "page": "Projects"},
+            {"icon": "✅", "label": "Tasks", "page": "Tasks"},
+            {"icon": "🖥️", "label": "Workspace", "page": "Workspace"},  # Add this line
+            {"icon": "🔔", "label": "Notifications", "page": "Notifications"},
+            {"icon": "📅", "label": "Calendar", "page": "Calendar"},
+            {"icon": "👤", "label": "Admin", "page": "Admin"},
+            {"icon": "👤", "label": "Profile", "page": "Profile"}
+        ]
+    else:
+        menu_items = [
+            {"icon": "🏠", "label": "Dashboard", "page": "Dashboard"},
+            {"icon": "📂", "label": "Projects", "page": "Projects"},
+            {"icon": "✅", "label": "Tasks", "page": "Tasks"},
+            {"icon": "🖥️", "label": "Workspace", "page": "Workspace"},  # Add this line
+            {"icon": "🔔", "label": "Notifications", "page": "Notifications"},
+            {"icon": "📅", "label": "Calendar", "page": "Calendar"},
+            {"icon": "👤", "label": "Profile", "page": "Profile"}
+        ]
+
+    # Create navigation buttons with the new centered layout
+    for idx, item in enumerate(menu_items):
+        is_active = st.session_state.get('page') == item['page']
+        with st.sidebar:
+            cols = st.columns([1,6,1])
+            with cols[1]:
+                if st.button(
+                    f"{item['icon']} {item['label']}",
+                    key=f"nav_{item['page']}_{idx}",  # Unique key with index
+                    type="primary" if is_active else "secondary"
+                ):
+                    st.session_state.page = item['page']
+                    st.rerun()
+
+
+    # Update the sidebar organization (replace the relevant section)
+    st.sidebar.markdown("---")  # First separator above documentation
+
+    # Documentation Button
+    if st.sidebar.button(
+        "📚 Documentation",
+        key="documentation_button",
+        use_container_width=False,
+        type="secondary"
+    ):
+        st.session_state.page = "Documentation"
         st.rerun()
 
-# Help Button in Sidebar
-if st.session_state.authenticated:
-    if st.sidebar.button("❓ Help"):
-        st.session_state.show_help = not st.session_state.show_help
+    
+    
+    # Replace the existing help section in your app.py with this code:
 
-# Help Content
-if st.session_state.authenticated and st.session_state.show_help:
-    st.sidebar.markdown("### Help")
-    st.sidebar.markdown("""
-        - **Dashboard**: View an overview of your projects and tasks.
-        - **Projects**: Create and manage projects.
-        - **Tasks**: Add, update, and track tasks.
-        - **Reports**: Analyze project progress and time tracking.
-        - **Notifications**: Stay updated on upcoming and overdue tasks.
-    """)
+    # Help Button (now below documentation)
+    if st.sidebar.button(
+        "❓ Help", 
+        key="help_button",
+        use_container_width=False
+    ):
+        st.session_state.show_help = not st.session_state.get('show_help', False)
+        st.rerun()
 
+    # Help content expander
+    if st.session_state.get('show_help', False):
+        with st.sidebar.expander("📚 Help Center", expanded=True):
+            # Add CSS styling using st.markdown with unsafe_allow_html
+            st.markdown("""
+            <style>
+                .help-section {
+                    margin-bottom: 1.5rem;
+                }
+                .help-title {
+                    font-size: 1.1rem;
+                    font-weight: 600;
+                    color: #2c3e50;
+                    margin-bottom: 0.5rem;
+                    border-bottom: 1px solid #e0e0e0;
+                    padding-bottom: 0.3rem;
+                }
+                .help-subtitle {
+                    font-weight: 500;
+                    color: #4E8BF5;
+                    margin: 0.8rem 0 0.3rem 0;
+                }
+                .help-list {
+                    margin-left: 1rem;
+                    padding-left: 0.5rem;
+                }
+                .help-list li {
+                    margin-bottom: 0.4rem;
+                }
+                .help-note {
+                    background-color: #E1F0FF;
+                    padding: 0.8rem;
+                    border-radius: 6px;
+                    margin: 0.8rem 0;
+                    font-size: 0.9rem;
+                }
+                .help-tip {
+                    background-color: #E8F5E9;
+                    padding: 0.8rem;
+                    border-radius: 6px;
+                    margin: 0.8rem 0;
+                    font-size: 0.9rem;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            # Getting Started Section
+            st.markdown("### Getting Started")
+            st.write("Welcome to the Project Management App! This guide will help you navigate and use all the features effectively.")
+            
+            st.markdown("**First Steps**")
+            st.markdown("""
+            - **Create your first project**: Navigate to Projects → Add New Project
+            - **Add team members**: Go to Admin → User Management to add collaborators
+            - **Set up tasks**: In the Tasks section, create tasks and assign them to team members
+            """)
+            
+            st.markdown('<div class="help-note">💡 <strong>Pro Tip</strong>: Use the Dashboard for a quick overview of all your projects and tasks.</div>', unsafe_allow_html=True)
+            
+            # Feature Guide Section
+            st.markdown("### Feature Guide")
+            
+            st.markdown("**Dashboard**")
+            st.markdown("""
+            - View project health metrics and quick statistics
+            - Track progress with visual charts and timelines
+            - Filter data by project, status, or time period
+            """)
+            
+            st.markdown("**Projects**")
+            st.markdown("""
+            - Create and manage all your projects in one place
+            - Set budgets, timelines, and assign owners
+            - View detailed analytics including budget tracking
+            - Use Gantt charts to visualize project timelines
+            """)
+            
+            st.markdown("**Tasks**")
+            st.markdown("""
+            - Create tasks with deadlines, priorities, and assignees
+            - Track time spent and completion status
+            - Add dependencies between tasks
+            - Attach files and add comments for collaboration
+            """)
 
+            st.markdown("**Workspace**")
+            st.markdown("""
+            - One stop centre to manage your tasks
+            - Create task, assign, and track progress with deadlines and priorities
+            - Upload and share project documents with team members
+            - Start threaded conversations with your team
+            - Visualize project deadlines and task dependencies
+            - Track completion rates with visual metrics and charts
+            - View and manage project members            
+            """)
+            
+            st.markdown("**Calendar**")
+            st.markdown("""
+            - View all tasks in a calendar layout
+            - Switch between month, week, and day views
+            - Color-coded by status for easy identification
+            """)
+            
+            st.markdown("**Notifications**")
+            st.markdown("""
+            - Get alerts for upcoming and overdue tasks
+            - Customize notification preferences
+            - Filter notifications by priority or project
+            """)
+            
+            st.markdown('<div class="help-tip">🔍 <strong>Quick Search</strong>: Most tables support filtering - look for the filter icons in column headers.</div>', unsafe_allow_html=True)
+            
+            # Keyboard Shortcuts Section
+            st.markdown("### Keyboard Shortcuts")
+            st.markdown("""
+            - `Ctrl` + `F` - Search current page
+            - `Esc` - Close modals and popups
+            - `Enter` - Submit forms
+            """)
+            
+            # Troubleshooting Section
+            st.markdown("### Troubleshooting")
+            
+            st.markdown("**Common Issues**")
+            st.markdown("""
+            - **Can't see a project?** Check if you're the owner or have been added to the project team
+            - **Task not updating?** Try refreshing the page (F5)
+            - **Missing features?** Admin features are only available to users with Admin role
+            """)
+            
+            st.markdown('<div class="help-note">❓ <strong>Need more help?</strong> Contact support at support@projectapp.com or visit our documentation.</div>', unsafe_allow_html=True)
 
-
+    st.sidebar.markdown("---")  # Separator before logout
 
     
+
+    # Logout Section
+    if st.session_state.authenticated:
+        
+        # In your sidebar section where the logout button is defined, replace the CSS with this:
+
+        st.markdown("""
+        <style>
+            /* Unified button styling for ALL sidebar buttons */
+            div[data-testid="stSidebar"] .stButton>button {
+                width: 100% !important;
+                height: 42px !important;
+                margin: 8px 0 !important;
+                background-color: #E1F0FF !important;
+                color: #2c3e50 !important;
+                border: 1px solid #B8D4FF !important;
+                border-radius: 8px !important;
+                transition: all 0.2s ease !important;
+                font-family: 'Roboto', sans-serif !important;
+            }
+            
+            div[data-testid="stSidebar"] .stButton>button:hover {
+                background-color: #D0E2FF !important;
+                transform: translateY(-1px) !important;
+            }
+            
+            div[data-testid="stSidebar"] .stButton>button[kind="primary"] {
+                background-color: #4E8BF5 !important;
+                color: white !important;
+                border: 1px solid #4E8BF5 !important;
+            }
+
+            /* Remove extra spacing above logout section */
+            div[data-testid="stSidebar"] div:has(> .stButton > button[key="logout_button"]) {
+                margin-top: 0 !important;
+                padding-top: 0 !important;
+            }
+            
+            /* Logout confirmation styling */
+            .logout-confirmation-container {
+                background-color: #ffffff;
+                padding: 12px;
+                border-radius: 8px;
+                margin-bottom: 8px;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+        
+        # Initialize session state if not already done
+        if "show_logout_confirmation" not in st.session_state:
+            st.session_state.show_logout_confirmation = False
+
+
+        # Logout Section - placed at the bottom of your sidebar code
+        if st.session_state.authenticated:
+            # Remove separators and adjust spacing by placing this at the very end of sidebar content
+            if not st.session_state.show_logout_confirmation:
+                if st.sidebar.button(
+                    "🚪 Logout",
+                    key="logout_button",
+                    use_container_width=True
+                ):
+                    st.session_state.show_logout_confirmation = True
+                    st.rerun()
+            else:
+                st.sidebar.markdown("""
+                <div class="logout-confirmation-container">
+                    <p style="text-align: center; margin-bottom: 12px;">Are you sure you want to logout?</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.sidebar.button(
+                    "✅ Confirm Logout", 
+                    key="logout_confirm", 
+                    type="primary",
+                    use_container_width=True
+                ):
+                    # Clear session state
+                    st.session_state.authenticated = False
+                    st.session_state.user_id = None
+                    st.session_state.user_role = None
+                    st.session_state.breadcrumbs = []
+                    st.session_state.page = "Dashboard"
+                    st.session_state.show_help = False
+                    st.session_state.show_logout_confirmation = False
+                    st.rerun()
+                
+                if st.sidebar.button(
+                    "❌ Cancel", 
+                    key="logout_cancel",
+                    use_container_width=True
+                ):
+                    st.session_state.show_logout_confirmation = False
+                    st.rerun()
+
+    st.sidebar.markdown("---")  # Separator after logout
+
 
 # Define status colors for tasks
 status_colors = {
@@ -774,6 +1529,316 @@ status_colors = {
     "Completed": "#32CD32",  # LimeGreen
     "Overdue": "#FF4500"  # OrangeRed
 }
+
+
+
+# Reusable edit task form function
+def edit_task_form(task_id, project_id=None):
+    """Reusable edit task form with all sections (time tracking, dates, budget)"""
+    # Get task details with all budget-related fields
+    task = query_db("""
+        SELECT 
+            t.id, t.project_id, t.title, t.description, t.status, 
+            t.created_at, t.deadline, t.time_spent, t.priority, 
+            t.recurrence, t.assigned_to, t.start_date, 
+            t.actual_start_date, t.actual_deadline, 
+            t.budget as original_budget,
+            t.actual_cost, t.budget_variance,
+            p.name as project_name, 
+            u.username as assignee_name 
+        FROM tasks t
+        LEFT JOIN projects p ON t.project_id = p.id
+        LEFT JOIN users u ON t.assigned_to = u.id
+        WHERE t.id = ?
+    """, (task_id,), one=True)
+    
+    if not task:
+        st.error("Task not found")
+        return False
+
+    with st.form(key=f"edit_task_{task_id}_form"):
+        st.subheader(f"✏️ Edit Task: {task[2]}")
+        
+        # Main columns layout
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            title = st.text_input("Task Title*", value=task[2])
+            description = st.text_area("Description", value=task[3] or "")
+            status = st.selectbox(
+                "Status*",
+                options=["Pending", "In Progress", "Completed", "On Hold"],
+                index=["Pending", "In Progress", "Completed", "On Hold"].index(task[4]) 
+                if task[4] in ["Pending", "In Progress", "Completed", "On Hold"] else 0
+            )
+            
+        with col2:
+            priority = st.selectbox(
+                "Priority*",
+                options=["High", "Medium", "Low"],
+                index=["High", "Medium", "Low"].index(task[8]) 
+                if task[8] in ["High", "Medium", "Low"] else 1
+            )
+            
+            users = query_db("SELECT id, username FROM users ORDER BY username")
+            current_assignee = task[-1] if task[-1] else "Unassigned"
+            assignee_options = ["Unassigned"] + [user[1] for user in users]
+            assignee = st.selectbox(
+                "Assignee",
+                options=assignee_options,
+                index=assignee_options.index(current_assignee) 
+                if current_assignee in assignee_options else 0
+            )
+
+        # Time Tracking Section
+        st.subheader("Time Tracking", divider="gray")
+        time_col1, time_col2 = st.columns(2)
+        
+        with time_col1:
+            planned_time = st.number_input(
+                "Planned Time Spent (Hours)*",
+                min_value=0.0,
+                value=float(task[7]) if task[7] is not None and str(task[7]).replace('.', '', 1).isdigit() else 0.0,
+                step=0.5
+            )
+            
+        with time_col2:
+            actual_time = st.number_input(
+                "Actual Time Spent (Hours)",
+                min_value=0.0,
+                value=float(task[16]) if len(task) > 16 and task[16] is not None and str(task[16]).replace('.', '', 1).isdigit() else 0.0,
+                step=0.5
+            )
+
+        # Dates Section - Restored Actual Dates placeholders
+        st.subheader("Dates", divider="gray")
+        date_col1, date_col2 = st.columns(2)
+        
+        with date_col1:
+            # Planned Start Date
+            try:
+                start_date_value = datetime.strptime(str(task[11]), "%Y-%m-%d").date() if task[11] else datetime.now().date()
+            except:
+                start_date_value = datetime.now().date()
+            start_date = st.date_input("Planned Start Date*", value=start_date_value)
+            
+            # Actual Start Date (always shown)
+            try:
+                actual_start_value = datetime.strptime(str(task[12]), "%Y-%m-%d").date() if task[12] else None
+            except:
+                actual_start_value = None
+            actual_start = st.date_input("Actual Start Date", value=actual_start_value)
+            
+        with date_col2:
+            # Planned Deadline
+            try:
+                deadline_value = datetime.strptime(str(task[6]), "%Y-%m-%d").date() if task[6] else datetime.now().date() + timedelta(days=7)
+            except:
+                deadline_value = datetime.now().date() + timedelta(days=7)
+            deadline = st.date_input("Planned Deadline*", value=deadline_value)
+            
+            # Actual Deadline (always shown)
+            try:
+                actual_deadline_value = datetime.strptime(str(task[13]), "%Y-%m-%d").date() if task[13] else None
+            except:
+                actual_deadline_value = None
+            actual_deadline = st.date_input("Actual Deadline", value=actual_deadline_value)
+
+        # Budget Section
+        st.subheader("Budget", divider="gray")
+        budget_col1, budget_col2 = st.columns(2)
+        
+        original_budget = task[14]  # From our modified query
+        try:
+            original_budget_value = float(original_budget) if original_budget is not None else None
+            formatted_original_budget = f"${original_budget_value:,.2f}" if original_budget_value is not None else "Not set"
+        except ValueError:
+            formatted_original_budget = "Invalid value"
+            original_budget_value = 0.0
+
+        try:
+            actual_cost_value = float(task[15]) if task[15] is not None and str(task[15]).replace('.', '', 1).isdigit() else 0.0
+        except:
+            actual_cost_value = 0.0
+
+        with budget_col1:
+            st.markdown(f"""
+            <div style="margin-bottom: 10px;">
+                <strong>Original Planned Budget:</strong> {formatted_original_budget}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            budget = st.number_input(
+                "Update Planned Budget ($)",
+                min_value=0.0,
+                value=original_budget_value if original_budget_value is not None else 0.0,
+                step=0.01,
+                key=f"budget_{task_id}"
+            )
+            
+        with budget_col2:
+            st.write(f"**Current Actual Cost:** ${actual_cost_value:,.2f}" if actual_cost_value else "**Current Actual Cost:** Not set")
+            actual_cost = st.number_input(
+                "Update Actual Cost ($)",
+                min_value=0.0,
+                value=actual_cost_value,
+                step=0.01,
+                key=f"actual_cost_{task_id}"
+            )
+
+        # Form actions
+        st.divider()
+        col1, col2, _ = st.columns([1,1,2])
+        
+        submitted = st.form_submit_button("💾 Save Changes")
+        if submitted:
+            assignee_id = None
+            if assignee != "Unassigned":
+                assignee_result = query_db(
+                    "SELECT id FROM users WHERE username = ?", 
+                    (assignee,), one=True
+                )
+                assignee_id = assignee_result[0] if assignee_result else None
+            
+            query_db("""
+                UPDATE tasks SET
+                    title = ?, description = ?, status = ?,
+                    priority = ?, assigned_to = ?, time_spent = ?,
+                    actual_time_spent = ?,
+                    start_date = ?, deadline = ?,
+                    actual_start_date = ?, actual_deadline = ?,
+                    budget = ?, actual_cost = ?
+                WHERE id = ?
+            """, (
+                title, description, status,
+                priority, assignee_id, planned_time,
+                actual_time,
+                start_date, deadline,
+                actual_start, actual_deadline,
+                budget, actual_cost,
+                task_id 
+            ))
+            
+            st.success("Task updated successfully!")
+            return True
+        
+        if st.form_submit_button("❌ Cancel"):
+            return False
+    
+    return False
+
+
+
+
+# Add this helper function somewhere in your helper functions section (before the page routing)
+def display_project_analytics_table(projects_data):
+    """Display the project analytics table with consistent styling"""
+    # Convert to DataFrame with correct column names
+    project_df = pd.DataFrame(projects_data, columns=[
+        "ID", "Owner ID", "Project", "Description", "Start Date", "End Date",
+        "Budget", "Actual Cost", "Budget Variance", "Total Tasks",
+        "Completed Tasks", "Owner", "Completion %",
+        "Planned Duration (days)", "Actual Duration (days)"
+    ])
+
+    # Ensure date columns are proper datetime objects
+    project_df["Start Date"] = pd.to_datetime(project_df["Start Date"])
+    project_df["End Date"] = pd.to_datetime(project_df["End Date"])
+
+    def format_date(date_val):
+        if pd.isna(date_val):
+            return ""
+        if isinstance(date_val, (pd.Timestamp, datetime.date)):
+            return date_val.strftime('%Y-%m-%d')
+        try:
+            return pd.to_datetime(date_val).strftime('%Y-%m-%d')
+        except:
+            return str(date_val)
+
+    def style_project_table(df):
+        """Style the project table with robust duration column handling"""
+        styled_df = df.copy()
+        
+        # Safely format dates
+        styled_df["Start Date"] = pd.to_datetime(styled_df["Start Date"], errors='coerce').dt.strftime('%Y-%m-%d')
+        styled_df["End Date"] = pd.to_datetime(styled_df["End Date"], errors='coerce').dt.strftime('%Y-%m-%d')
+        
+        # Robust duration formatting with error handling
+        def safe_duration_format(x):
+            try:
+                if pd.isna(x):
+                    return "N/A"
+                # Check if value is already numeric
+                if isinstance(x, (int, float)):
+                    return f"{float(x):.1f} days"
+                # Handle string representations of numbers
+                if isinstance(x, str) and x.replace('.', '', 1).isdigit():
+                    return f"{float(x):.1f} days"
+                return "N/A"
+            except (ValueError, TypeError):
+                return "N/A"
+        
+        # Apply safe formatting to duration columns
+        styled_df["Planned Duration"] = styled_df["Planned Duration (days)"].apply(safe_duration_format)
+        styled_df["Actual Duration"] = styled_df["Actual Duration (days)"].apply(safe_duration_format)
+        
+        # Format other columns with error handling
+        def safe_currency_format(x):
+            try:
+                return f"${float(x):,.2f}" if pd.notnull(x) and str(x).strip() else "$0.00"
+            except (ValueError, TypeError):
+                return "$0.00"
+        
+        styled_df["Budget"] = styled_df["Budget"].apply(safe_currency_format)
+        styled_df["Actual Cost"] = styled_df["Actual Cost"].apply(safe_currency_format)
+        styled_df["Budget Variance"] = styled_df["Budget Variance"].apply(safe_currency_format)
+        
+        # Safely format progress percentage
+        def safe_progress_format(x):
+            try:
+                return f"{float(x):.1f}%" if pd.notnull(x) and str(x).strip() else "0.0%"
+            except (ValueError, TypeError):
+                return "0.0%"
+        
+        styled_df["Progress"] = styled_df["Completion %"].apply(safe_progress_format)
+        
+        return styled_df[[
+            "Project", "Owner", "Start Date", "End Date",
+            "Planned Duration", "Actual Duration",
+            "Budget", "Actual Cost", "Budget Variance",
+            "Total Tasks", "Progress"
+        ]]
+
+    styled_df = style_project_table(project_df)
+
+    # Display the styled table with container styling
+    st.markdown("""
+    <div style="border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        <div style="background-color: #f8f9fa; padding: 15px; border-bottom: 1px solid #e0e0e0;">
+            <h3 style="margin: 0; color: #2c3e50;">Project Analytics</h3>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Display the dataframe with Streamlit
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Start Date": st.column_config.DateColumn("Start Date"),
+            "End Date": st.column_config.DateColumn("End Date"),
+            "Budget Variance": st.column_config.TextColumn("Budget Variance"),
+            "Planned Duration": st.column_config.TextColumn("Planned Duration"),
+            "Actual Duration": st.column_config.TextColumn("Actual Duration")
+        }
+    )
+
+    st.write("</div>", unsafe_allow_html=True)  # Close the styled container
+
+
+
+
+
 
 
 
@@ -1068,46 +2133,155 @@ def display_breadcrumbs():
         ])
         st.markdown(f"**Navigation:** {breadcrumb_links}", unsafe_allow_html=True)
 
+
+def save_logo_to_db(logo_bytes):
+    """Save logo to database"""
+    query_db(
+        "INSERT OR REPLACE INTO app_settings (setting_name, setting_value) VALUES (?, ?)",
+        ("login_logo", logo_bytes)
+    )
+
+def get_logo_from_db():
+    """Retrieve logo from database"""
+    result = query_db(
+        "SELECT setting_value FROM app_settings WHERE setting_name=?",
+        ("login_logo",),
+        one=True
+    )
+    return result[0] if result else None
+
+
+
+
+
+
 # User Authentication
 if not st.session_state.authenticated:
-    st.title("Login or Register")
+    # ===== NEW CODE START =====
+    # Initialize logo in session state if not exists
+    if 'login_logo' not in st.session_state:
+        # Try to load logo from database
+        logo_data = query_db("SELECT setting_value FROM app_settings WHERE setting_name='login_logo'", one=True)
+        st.session_state.login_logo = logo_data[0] if logo_data else None
     
-    # Login Form
-    with st.form(key="login_form"):  # Use a unique key
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.form_submit_button("Login"):
-            user = query_db("SELECT * FROM users WHERE username=?", (username,), one=True)
-            if user and verify_password(user[2], password):
-                st.session_state.authenticated = True
-                st.session_state.user_id = user[0]
-                st.session_state.user_role = user[3]  # Store the user's role
-                st.success("Login successful!")
-                st.rerun()
-            else:
-                st.error("Invalid username or password.")
+    # Create columns for logo + title
+    logo_col, title_col = st.columns([1, 4])
     
-    # Registration Form
-    with st.form("register_form"):
-        new_username = st.text_input("New Username")
-        new_password = st.text_input("New Password", type="password")
-        if st.form_submit_button("Register"):
-            if query_db("SELECT * FROM users WHERE username=?", (new_username,), one=True):
-                st.error("Username already exists.")
-            else:
-                # First user is an Admin, others are Users
-                role = "Admin" if len(query_db("SELECT * FROM users")) == 0 else "User"
-                query_db("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                         (new_username, hash_password(new_password), role))
-                st.success("Registration successful! Please login.")
+    with logo_col:
+        # Show logo uploader if no logo exists
+        if st.session_state.login_logo is None:
+            uploaded_logo = st.file_uploader("Upload Company Logo", 
+                                           type=["png", "jpg", "jpeg"],
+                                           key="logo_uploader")
+            if uploaded_logo is not None:
+                # Save to session state and database
+                st.session_state.login_logo = uploaded_logo.read()
+                query_db("""
+                    INSERT OR REPLACE INTO app_settings (setting_name, setting_value) 
+                    VALUES ('login_logo', ?)
+                """, (st.session_state.login_logo,))
                 st.rerun()
+        else:
+            # Display the logo
+            st.image(st.session_state.login_logo, width=100)
+    
+    with title_col:
+        st.title("Project Management App")
+    # ===== NEW CODE END =====
+    
+    # Center the login form (existing code)
+    col1, col2, col3 = st.columns([1,3,1])
+    
+    with col2:
+        # Rest of your existing login/register code remains exactly the same
+        tab1, tab2 = st.tabs(["Login", "Register"])
+        
+        with tab1:
+            with st.form(key="login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                if st.form_submit_button("Login"):
+                    user = query_db("SELECT * FROM users WHERE username=?", (username,), one=True)
+                    if user and verify_password(user[2], password):
+                        st.session_state.authenticated = True
+                        st.session_state.user_id = user[0]
+                        st.session_state.user_role = user[3]
+
+                        # ADD THIS CODE BLOCK - Records login time and increments count
+                        query_db("""
+                            UPDATE users 
+                            SET last_login = datetime('now'), 
+                                login_count = COALESCE(login_count, 0) + 1,
+                                is_active = 1
+                            WHERE id=?
+                        """, (user[0],))
+
+                        st.success("Login successful!")
+                        st.session_state.show_welcome = True  # Set flag to show welcome message
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password.")
+        
+        with tab2:
+            with st.form("register_form"):
+                new_username = st.text_input("New Username")
+                new_password = st.text_input("New Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                if st.form_submit_button("Register"):
+                    if new_password != confirm_password:
+                        st.error("Passwords don't match!")
+                    elif query_db("SELECT * FROM users WHERE username=?", (new_username,), one=True):
+                        st.error("Username already exists.")
+                    else:
+                        role = "Admin" if len(query_db("SELECT * FROM users")) == 0 else "User"
+                        query_db("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                                (new_username, hash_password(new_password), role))
+                        st.success("Registration successful! Please login.")
+                        st.rerun()
+
+
 else:
-    # Main App
-    if st.session_state.user_role == "Admin":
-        page = st.sidebar.radio("Go to", ["Dashboard", "Projects", "Tasks", "Reports", "Notifications", "Calendar","Admin", "Profile", "Documentation"])
-    else:
-        page = st.sidebar.radio("Go to", ["Dashboard", "Projects", "Tasks", "Reports", "Notifications", "Calendar", "Profile","Documentation"])
     
+    # Main App
+    if 'page' not in st.session_state:
+        st.session_state.page = "Dashboard"
+
+    # Display welcome message if flag is set
+    if st.session_state.get('show_welcome', False):
+        user = query_db("SELECT username, first_name, last_name FROM users WHERE id=?", (st.session_state.user_id,), one=True)
+        if user:
+            # Use first name if available, otherwise username
+            welcome_name = user[1] if user[1] else user[0]
+            # Add last name if available
+            if user[1] and user[2]:  # If both first and last name exist
+                welcome_name = f"{user[1]} {user[2]}"
+        else:
+            welcome_name = "there"
+        
+        # Create a nice welcome container
+        with st.container():
+            st.markdown(f"""
+            <div style="
+                background-color: #E1F0FF;
+                padding: 1.5rem;
+                border-radius: 10px;
+                border-left: 5px solid #4E8BF5;
+                margin-bottom: 1.5rem;
+            ">
+                <h3 style="color: #2c3e50; margin-top: 0;">🎉 Welcome back, {welcome_name}!</h3>
+                <p style="margin-bottom: 0.5rem;">You're logged in as <strong>{st.session_state.user_role}</strong>.</p>
+                <p style="margin-bottom: 0;">Let's get productive! 🚀</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Add a button to dismiss the message
+            if st.button("Got it!", key="dismiss_welcome"):
+                st.session_state.show_welcome = False
+                st.rerun()
+
+    page = st.session_state.page
+    
+
     # Update breadcrumbs
     update_breadcrumbs(page)
     display_breadcrumbs()
@@ -1247,9 +2421,7 @@ else:
 
     # Helper function for task progress over time (Line Chart)
     def plot_task_progress_over_time(tasks_df):
-        """
-        Create a line chart showing the number of tasks completed over time.
-        """
+        """Create a line chart showing the number of tasks completed over time."""
         if tasks_df.empty:
             st.warning("No tasks found for visualization.")
             return
@@ -1261,21 +2433,22 @@ else:
             st.warning("No completed tasks found.")
             return
         
-        # Convert "Start Date" to datetime and extract the date part
-        completed_tasks["Start Date"] = pd.to_datetime(completed_tasks["Start Date"]).dt.date
+        # Convert "Planned Start Date" to datetime (using new column name)
+        completed_tasks["Planned Start Date"] = pd.to_datetime(completed_tasks["Planned Start Date"]).dt.date
         
-        # Group by date and count completed tasks
-        progress_data = completed_tasks.groupby("Start Date").size().reset_index(name="Completed Tasks")
+        # Group by date and count completed tasks (using new column name)
+        progress_data = completed_tasks.groupby("Planned Start Date").size().reset_index(name="Completed Tasks")
         
         # Create line chart
         fig = px.line(
             progress_data,
-            x="Start Date",
+            x="Planned Start Date",
             y="Completed Tasks",
             title="Task Progress Over Time",
-            labels={"Start Date": "Date", "Completed Tasks": "Number of Tasks Completed"},
+            labels={"Planned Start Date": "Date", "Completed Tasks": "Number of Tasks Completed"},
             markers=True,
         )
+        
         st.plotly_chart(fig)
 
 
@@ -1346,1395 +2519,3771 @@ else:
         st.plotly_chart(fig)
 
 
-
-
-
-    # Dashboard Page
-    if page == "Dashboard":
-        st.title("🏠 Dashboard")
-        st.write("Welcome to the Project Management App!")
-
-        # Summary Statistics
-        st.subheader("📊 Summary Statistics")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            total_projects = len(get_projects())
-            st.metric("Total Projects", total_projects)
-        with col2:
-            total_tasks = len(get_tasks())
-            st.metric("Total Tasks", total_tasks)
-        with col3:
-            overdue_tasks_count = len(get_upcoming_and_overdue_tasks()[1])
-            st.metric("Overdue Tasks", overdue_tasks_count)
-        with col4:
-            upcoming_tasks_count = len(get_upcoming_and_overdue_tasks()[0])
-            st.metric("Upcoming Tasks", upcoming_tasks_count)
-
-        # Collapsible Section for Overdue Tasks
-        with st.expander("⚠️ Overdue Tasks", expanded=False):
-            overdue_tasks = get_upcoming_and_overdue_tasks()[1]
-            if overdue_tasks:
-                for task in overdue_tasks:
-                    priority = task[8] if len(task) > 8 else "Medium"
-                    color = priority_colors.get(priority, "#000000")
-                    st.markdown(f"""
-                        <p style="color: {color};">
-                            - <strong>{task[2]}</strong> (Deadline: {task[6]})
-                        </p>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("No overdue tasks.")
-
-        # Collapsible Section for Upcoming Tasks
-        with st.expander("🔜 Upcoming Tasks", expanded=False):
-            upcoming_tasks = get_upcoming_and_overdue_tasks()[0]
-            if upcoming_tasks:
-                for task in upcoming_tasks:
-                    priority = task[8] if len(task) > 8 else "Medium"
-                    color = priority_colors.get(priority, "#000000")
-                    st.markdown(f"""
-                        <p style="color: {color};">
-                            - <strong>{task[2]}</strong> (Deadline: {task[6]})
-                        </p>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("No upcoming tasks.")
-
-        # Projects Section
-        st.subheader("📂 Projects")
-        projects = get_projects()
-        if not projects:
-            st.warning("No projects found in the database.")
-        else:
-            for project in projects:
-                with st.expander(f"Project: {project[2]}"):
-                    st.write(f"**Description:** {project[3]}")
-                    st.write(f"**Start Date:** {project[4]} | **End Date:** {project[5]}")
-
-                    # Fetch tasks for the current project
-                    tasks = get_tasks(project[0])
-                    st.write(f"**Tasks for project {project[2]}:**")
-                    
-                    if not tasks:
-                        st.warning("No tasks found for this project.")
-                    else:
-                        # Calculate progress
-                        completed_tasks = len([task for task in tasks if task[4] == "Completed"])
-                        total_tasks = len(tasks)
-                        progress = (completed_tasks / total_tasks) * 100 if total_tasks > 0 else 0
-                        st.progress(int(progress))
-                        st.write(f"**Progress:** {completed_tasks}/{total_tasks} tasks completed ({progress:.1f}%)")
-
-                        # Create Gantt chart for the current project
-                        gantt_data = []
-                        for task in tasks:
-                            start_date = datetime.strptime(task[11], "%Y-%m-%d").date() if task[11] else datetime.today().date()
-                            deadline = datetime.strptime(task[6], "%Y-%m-%d").date()
-                            gantt_data.append({
-                                "Task": task[2],
-                                "Start": start_date,
-                                "Finish": deadline,
-                                "Status": task[4],
-                                "Color": status_colors.get(task[4], "#f0f0f0")
-                            })
-
-                        # Create a DataFrame for the Gantt chart
-                        df = pd.DataFrame(gantt_data)
-
-                        # Create the Gantt chart using Plotly
-                        fig = px.timeline(df, x_start="Start", x_end="Finish", y="Task", color="Status", title=f"Gantt Chart for {project[2]}",
-                                        color_discrete_map=status_colors)
-                        st.plotly_chart(fig)
-
-
-
-# Projects Page
-    elif page == "Projects":
-        st.title("📂 Projects")
+    # Helper function to visualize task timeline (Gantt chart)
+    def plot_task_timeline(tasks_df):
+        if tasks_df.empty:
+            st.warning("No tasks found for visualization.")
+            return
         
-        # Initialize success message state if it doesn't exist
+        # Prepare data for Gantt chart - use the new column names
+        timeline_df = tasks_df.copy()
+        timeline_df['Start'] = pd.to_datetime(tasks_df['Planned Start Date'])
+        timeline_df['End'] = pd.to_datetime(tasks_df['Planned Deadline'])
+        timeline_df['Completion'] = (timeline_df['Status'] == 'Completed').astype(int)
+        
+        # Add actual dates if they exist
+        if 'Actual Start Date' in tasks_df.columns:
+            timeline_df['Actual Start'] = pd.to_datetime(tasks_df['Actual Start Date'])
+        if 'Actual Deadline' in tasks_df.columns:
+            timeline_df['Actual End'] = pd.to_datetime(tasks_df['Actual Deadline'])
+        
+        fig = px.timeline(
+            timeline_df,
+            x_start="Start",
+            x_end="End",
+            y="Task",
+            color="Status",
+            color_discrete_map=status_colors,
+            title="Task Timeline with Completion Status",
+            hover_data=["Priority", "Assignee", "Project Owner"]
+        )
+        
+        # Add actual dates to hover data if they exist
+        if 'Actual Start' in timeline_df.columns and 'Actual End' in timeline_df.columns:
+            fig.update_traces(
+                customdata=timeline_df[['Actual Start', 'Actual End']],
+                hovertemplate=(
+                    "<b>%{y}</b><br>" +
+                    "Planned: %{x|%b %d, %Y} - %{x_end|%b %d, %Y}<br>" +
+                    "Actual: %{customdata[0]|%b %d, %Y} - %{customdata[1]|%b %d, %Y}<br>" +
+                    "Status: %{marker.color}<br>" +
+                    "Priority: %{customdata[2]}<br>" +
+                    "Project: %{customdata[3]}<extra></extra>"
+                )
+            )
+        
+        fig.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig, use_container_width=True)
+
+
+    #helper function to visualize assignee workload (Sunburst chart)
+    def plot_assignee_workload(tasks_df):
+        if tasks_df.empty:
+            st.warning("No tasks found for visualization.")
+            return
+        
+        # Prepare hierarchical data
+        workload_df = tasks_df.groupby(['Assignee', 'Status']).size().reset_index(name='Count')
+        
+        fig = px.sunburst(
+            workload_df,
+            path=['Assignee', 'Status'],
+            values='Count',
+            color='Status',
+            color_discrete_map=status_colors,
+            title="Assignee Workload by Task Status"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+    # Helper function to visualize budget variance (Waterfall chart)
+    def plot_budget_variance(tasks_df):
+        """Plot budget variance with proper null handling"""
+        if tasks_df.empty or 'Budget Variance' not in tasks_df.columns:
+            st.warning("No budget variance data available")
+            return
+        
+        # Filter out tasks with no variance data
+        variance_df = tasks_df[tasks_df['Budget Variance'].notna()].copy()
+        
+        if variance_df.empty:
+            st.warning("No tasks with complete budget data available")
+            return
+        
+        # Create waterfall chart
+        fig = go.Figure(go.Waterfall(
+            name="Budget Variance",
+            orientation="v",
+            measure=["relative"] * len(variance_df),
+            x=variance_df['Task'] + "<br>(" + variance_df['Project'] + ")",
+            textposition="outside",
+            text=[f"${x:,.2f}" for x in variance_df['Budget Variance']],
+            y=variance_df['Budget Variance'],
+            connector={"line":{"color":"rgb(63, 63, 63)"}},
+            increasing={"marker":{"color":"#00CC96"}},  # Green for positive variance
+            decreasing={"marker":{"color":"#EF553B"}},  # Red for negative variance
+        ))
+        
+        fig.update_layout(
+            title="Task Budget Variance (Budget - Actual Cost)",
+            yaxis_title="Amount ($)",
+            showlegend=False,
+            height=600
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+
+
+    def display_project_card(project):
+        """Helper function to display a project card"""
+        # Unpack only the needed values
+        project_id = project[0]
+        name = project[2]
+        description = project[3]
+        start_date = project[4]
+        end_date = project[5]
+        budget = project[6] if len(project) > 6 else None  # Safely get budget
+        
+        with st.container():
+            # Format budget display safely
+            budget_display = "Not set"
+            if budget is not None:
+                try:
+                    budget_display = f"${float(budget):,.2f}"
+                except (TypeError, ValueError):
+                    budget_display = "Invalid value"
+            
+            st.markdown(f"""
+            <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                <h3>{name}</h3>
+                <p><strong>Description:</strong> {description or "No description"}</p>
+                <p><strong>Timeline:</strong> {start_date} to {end_date}</p>
+                <p><strong>Budget:</strong> {budget_display}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Fetch tasks for the current project
+            tasks = get_tasks(project_id)
+            if not tasks:
+                st.warning("No tasks found for this project.")
+            else:
+                # Calculate progress
+                completed_tasks = len([task for task in tasks if task[4] == "Completed"])
+                total_tasks = len(tasks)
+                progress = (completed_tasks / total_tasks) * 100 if total_tasks > 0 else 0
+                
+                st.progress(int(progress))
+                st.write(f"**Progress:** {completed_tasks}/{total_tasks} tasks completed ({progress:.1f}%)")
+
+
+    def display_project_card_with_gantt(project):
+        """Helper function to display a project card with Gantt chart"""
+        project_id = project[0]
+        name = project[2]
+        description = project[3]
+        start_date = project[4]
+        end_date = project[5]
+        budget = project[6] if len(project) > 6 else None
+        
+        with st.container():
+            # Format budget display safely
+            budget_display = "Not set"
+            if budget is not None:
+                try:
+                    budget_display = f"${float(budget):,.2f}"
+                except (TypeError, ValueError):
+                    budget_display = "Invalid value"
+            
+            st.markdown(f"""
+            <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                <h3>{name}</h3>
+                <p><strong>Description:</strong> {description or "No description"}</p>
+                <p><strong>Timeline:</strong> {start_date} to {end_date}</p>
+                <p><strong>Budget:</strong> {budget_display}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Fetch tasks for the current project
+            tasks = get_tasks(project_id)
+            if not tasks:
+                st.warning("No tasks found for this project.")
+            else:
+                # Calculate progress
+                completed_tasks = len([task for task in tasks if task[4] == "Completed"])
+                total_tasks = len(tasks)
+                progress = (completed_tasks / total_tasks) * 100 if total_tasks > 0 else 0
+                
+                st.progress(int(progress))
+                st.write(f"**Progress:** {completed_tasks}/{total_tasks} tasks completed ({progress:.1f}%)")
+
+                # Prepare Gantt chart data
+                gantt_data = []
+                for task in tasks:
+                    task_start = datetime.strptime(task[11], "%Y-%m-%d").date() if task[11] else datetime.strptime(start_date, "%Y-%m-%d").date()
+                    task_end = datetime.strptime(task[6], "%Y-%m-%d").date() if task[6] else task_start
+                    
+                    gantt_data.append({
+                        "Task": task[2],
+                        "Start": task_start,
+                        "Finish": task_end,
+                        "Status": task[4],
+                        "Color": status_colors.get(task[4], "#f0f0f0")
+                    })
+
+                # Create Gantt chart if there are tasks
+                if gantt_data:
+                    st.subheader("📅 Project Timeline")
+                    gantt_df = pd.DataFrame(gantt_data)
+                    fig = px.timeline(
+                        gantt_df,
+                        x_start="Start",
+                        x_end="Finish",
+                        y="Task",
+                        color="Status",
+                        color_discrete_map=status_colors,
+                        title=f"Gantt Chart for {name}"
+                    )
+                    fig.update_yaxes(autorange="reversed")  # Show tasks in order
+                    st.plotly_chart(fig, use_container_width=True)
+    
+
+
+    
+     # Dashboard Page 
+    if page == "Dashboard":
+        st.markdown("---")
+      
+
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+        </style>
+        """, unsafe_allow_html=True)
+
+
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">🏠 Dashboard</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)  
+
+       
+        # ======= Project Summary Statistics =======
+        # ======= Project Summary Statistics =======
+        st.subheader("📊 Project Overview")
+
+        # Calculate project metrics
+        total_projects = len(query_db("SELECT * FROM projects"))
+        active_projects = len(query_db("SELECT * FROM projects WHERE end_date >= ?", (datetime.today().date(),)))
+        overdue_projects = len(query_db("""
+            SELECT p.id 
+            FROM projects p
+            WHERE p.end_date < ? 
+            AND EXISTS (
+                SELECT 1 FROM tasks t 
+                WHERE t.project_id = p.id 
+                AND t.status != 'Completed'
+            )
+        """, (datetime.today().date(),)))
+        completed_projects = len(query_db("""
+            SELECT p.id 
+            FROM projects p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM tasks t 
+                WHERE t.project_id = p.id 
+                AND t.status != 'Completed'
+            )
+        """))
+
+        # Update the columns from 3 to 4
+        cols = st.columns(4)  # Changed from 3 to 4 columns
+
+        # Existing cards (just showing the new one added)
+        with cols[0]:
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #4E8BF5;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+                <div class="metric-title"> 
+                    <span class="metric-icon">📂</span>
+                    <span class="metric-name">Total Projects</span>
+                </div>
+                <p class="metric-value">{total_projects}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+
+
+        with cols[1]:
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #32CD32;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+                <div class="metric-title"> 
+                    <span class="metric-icon">🟢</span>
+                    <span class="metric-name">Active Projects</span>
+                </div>
+                <p class="metric-value">{active_projects}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with cols[2]:
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #FF4500;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+                <div class="metric-title"> 
+                    <span class="metric-icon">⚠️</span>
+                    <span class="metric-name">Overdue Projects</span>
+                </div>
+                <p class="metric-value">{overdue_projects}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+        # Add the new Completed Projects card
+        with cols[3]:  
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #32CD32;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+                <div class="metric-title"> 
+                    <span class="metric-icon">✅</span>
+                    <span class="metric-name">Completed Projects</span>
+                </div>
+                <p class="metric-value">{completed_projects}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+
+        # Divider with spacing
+        # ======= Task Summary Statistics =======
+        # ======= Task Summary Statistics =======
+        st.markdown("---")
+        st.subheader("✅ Task Overview")
+
+        # Remove the admin restriction from these queries - let all users see all tasks
+        total_tasks = query_db("SELECT COUNT(*) FROM tasks")[0][0]
+        overdue_tasks_count = query_db("""
+            SELECT COUNT(*) FROM tasks 
+            WHERE status != 'Completed' AND deadline < DATE('now')
+        """)[0][0]
+
+        upcoming_tasks_count = query_db("""
+            SELECT COUNT(*) FROM tasks 
+            WHERE status != 'Completed' 
+            AND deadline BETWEEN DATE('now') AND DATE('now', '+' || ? || ' days')
+        """, (st.session_state.reminder_period,))[0][0]
+
+        completed_tasks_count = query_db("""
+            SELECT COUNT(*) FROM tasks 
+            WHERE status = 'Completed'
+        """)[0][0]
+
+        # Create task metric cards with clickable functionality
+        cols = st.columns(4)
+        with cols[0]:
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #4E8BF5;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
+                <div class="metric-title">
+                    <span class="metric-icon">✅</span>
+                    <span class="metric-name">Total Tasks</span>
+                </div>
+                <p class="metric-value">{total_tasks}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with cols[1]:
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #FF4500;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
+                <div class="metric-title">
+                    <span class="metric-icon">⚠️</span>
+                    <span class="metric-name">Overdue Tasks</span>
+                </div>
+                <p class="metric-value">{overdue_tasks_count}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with cols[2]:
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #FFA500;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
+                <div class="metric-title">
+                    <span class="metric-icon">🔜</span>
+                    <span class="metric-name">Upcoming Tasks</span>
+                </div>
+                <p class="metric-value">{upcoming_tasks_count}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Add JavaScript to handle card clicks
+        components.html("""
+        <script>
+            // Handle clicks on metric cards
+            document.addEventListener('click', function(e) {
+                if (e.target.closest('.dashboard-metric-card')) {
+                    const card = e.target.closest('.dashboard-metric-card');
+                    const page = card.getAttribute('data-page');
+                    if (page) {
+                        window.parent.postMessage({
+                            'streamlit:setComponentValue': {
+                                'page': page
+                            }
+                        }, '*');
+                    }
+                }
+            });
+            
+            // Listen for messages from Streamlit
+            window.addEventListener('message', function(event) {
+                if (event.data && event.data.page) {
+                    // This will trigger Streamlit to update the page
+                    window.parent.postMessage({
+                        streamlit: {
+                            type: 'streamlit:componentMessage',
+                            data: {page: event.data.page}
+                        }
+                    }, '*');
+                }
+            });
+        </script>
+        """, height=0)
+
+
+        # Add the new Completed Tasks card
+        with cols[3]:                                                                                                                                                                                                   
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #4CAF50;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
+                <div class="metric-title">
+                    <span class="metric-icon">✔️</span>
+                    <span class="metric-name">Completed Tasks</span>
+                </div>
+                <p class="metric-value">{completed_tasks_count}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+
+        
+
+        # ======= Project Health Dashboard =======
+        st.subheader("📈 Project Health")
+        
+        # Project Selection (single selection point for entire dashboard)
+        projects = get_projects()
+        project_options = ["All Projects"] + [p[2] for p in projects]
+        selected_project = st.selectbox("Select Project", project_options, key="health_project_select")
+        
+        # Filter tasks based on selection
+        if selected_project == "All Projects":
+            tasks_df = fetch_tasks()  
+            selected_project_id = None
+        else:
+            selected_project_id = query_db("SELECT id FROM projects WHERE name=?", (selected_project,), one=True)[0]
+            tasks_df = fetch_tasks(selected_project_id)
+
+        # Divider with spacing
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        
+        # Create tabs (always show all tabs)
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "Progress", 
+            "Distribution", 
+            "Budget", 
+            "Assignees", 
+            "Productivity"
+        ])
+        
+        # Helper function to export data and images
+        def export_tab_data(tab_name, data, fig=None):
+            with st.expander(f"📤 Export {tab_name} Data", expanded=False):
+                col1, col2 = st.columns(2)
+                
+                # Export as CSV
+                with col1:
+                    st.download_button(
+                        label="Download as CSV",
+                        data=data.to_csv(index=False),
+                        file_name=f"{tab_name.lower().replace(' ', '_')}_data.csv",
+                        mime="text/csv"
+                    )
+                
+                # Export image if figure exists
+                if fig:
+                    with col2:
+                        buf = io.BytesIO()
+                        fig.write_image(buf, format="png", width=1000)
+                        st.download_button(
+                            label="Download as PNG",
+                            data=buf.getvalue(),
+                            file_name=f"{tab_name.lower().replace(' ', '_')}_chart.png",
+                            mime="image/png"
+                        )
+        
+        # Tab1
+        with tab1:  # Progress tab
+            st.write("### Project Progress with Gantt Chart")
+            
+            if selected_project_id:
+                # Get the selected project's details
+                project_data = query_db("""
+                    SELECT p.name, p.start_date, p.end_date, 
+                        COUNT(t.id) as total_tasks,
+                        SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) as completed_tasks
+                    FROM projects p
+                    LEFT JOIN tasks t ON p.id = t.project_id
+                    WHERE p.id = ?
+                    GROUP BY p.id
+                """, (selected_project_id,), one=True)
+                
+                if project_data:
+                    name, start_date, end_date, total_tasks, completed_tasks = project_data
+                    
+                    # Fetch tasks for the selected project with both planned and actual dates
+                    tasks = query_db("""
+                        SELECT id, title, 
+                            start_date as planned_start_date, 
+                            deadline as planned_deadline, 
+                            actual_start_date,
+                            actual_deadline,
+                            status, priority 
+                        FROM tasks 
+                        WHERE project_id = ?
+                        ORDER BY deadline
+                    """, (selected_project_id,))
+                    
+                    if tasks:
+                        # Prepare Gantt chart data
+                        gantt_data = []
+                        today = datetime.now().date()
+                        
+                        for task in tasks:
+                            task_id, title, planned_start, planned_end, actual_start, actual_end, status, priority = task
+                            
+                            # Convert dates to datetime.date objects with fallbacks
+                            planned_start_date = pd.to_datetime(planned_start).date() if planned_start else pd.to_datetime(start_date).date()
+                            planned_deadline = pd.to_datetime(planned_end).date() if planned_end else pd.to_datetime(end_date).date()
+                            actual_start_date = pd.to_datetime(actual_start).date() if actual_start else planned_start_date
+                            actual_deadline = pd.to_datetime(actual_end).date() if actual_end else planned_deadline
+                            
+                            # Add both planned and actual tasks to the data
+                            gantt_data.append({
+                                "Task": title,
+                                "Start": planned_start_date,
+                                "Finish": planned_deadline,
+                                "Type": "Planned",
+                                "Status": status,
+                                "Priority": priority
+                            })
+                            
+                            if actual_start and actual_end:  # Only add actual timeline if dates exist
+                                gantt_data.append({
+                                    "Task": title,
+                                    "Start": actual_start_date,
+                                    "Finish": actual_deadline,
+                                    "Type": "Actual",
+                                    "Status": status,
+                                    "Priority": priority
+                                })
+                        
+                        gantt_df = pd.DataFrame(gantt_data)
+                        
+                        # Convert dates to strings for Plotly timeline
+                        gantt_df['Start'] = gantt_df['Start'].astype(str)
+                        gantt_df['Finish'] = gantt_df['Finish'].astype(str)
+
+
+                        
+
+                        
+                        # Create Gantt chart with proper bar sizing                                     
+                        fig = px.timeline(
+                            gantt_df,
+                            x_start="Start",
+                            x_end="Finish",
+                            y="Task",
+                            color="Type",
+                            color_discrete_map={
+                                "Planned": "rgba(158, 202, 225, 0.7)",  # Semi-transparent light blue
+                                "Actual": "rgba(78, 121, 167, 0.9)"     # Darker blue with slight transparency
+                            },
+                            title=f"Gantt Chart for {name}",
+                            hover_data=["Status", "Priority"],
+                            width=1000  # Fixed width for better control
+                        )
+
+                        # Reverse the y-axis to show tasks in correct order
+                        fig.update_yaxes(autorange="reversed")
+                        
+                        # Customize the chart appearance with better bar sizing
+                        fig.update_traces(
+                            marker_line_color='rgba(0,0,0,0.5)',  # Add border to bars
+                            marker_line_width=1,                  # Border width
+                            width=0.4                            # Make bars thicker (0-1 scale)
+                        )
+
+                        # Calculate today's position correctly
+                        min_date = pd.to_datetime(gantt_df['Start'].min())
+                        max_date = pd.to_datetime(gantt_df['Finish'].max())
+                        today_dt = pd.to_datetime(today)
+                        
+                        # Convert to milliseconds since epoch for precise positioning
+                        min_ms = min_date.value // 10**6  # Convert nanoseconds to milliseconds
+                        max_ms = max_date.value // 10**6
+                        today_ms = today_dt.value // 10**6
+                        
+                        # Calculate position (0-1 range)
+                        if max_ms > min_ms:
+                            today_position = (today_ms - min_ms) / (max_ms - min_ms)
+                        else:
+                            today_position = 0.5  # Default to middle if no date range
+
+                        # Add today's line with precise positioning
+                        fig.add_vline(
+                            x=today_position * (max_ms - min_ms) + min_ms,  # Convert back to absolute position
+                            line_dash="dot",
+                            line_color="red",
+                            line_width=3,  # Thicker line
+                            annotation_text=f"Today: {today.strftime('%b %d, %Y')}",
+                            annotation_position="top right",
+                            annotation_font_size=12,
+                            annotation_font_color="red"
+                        )
+
+                        # Adjust layout for better readability
+                        fig.update_layout(
+                            height=max(800, len(tasks) * 50),  # Taller chart with more space per task
+                            bargap=0.2,                       # Space between bars
+                            xaxis_range=[min_ms, max_ms],     # Set exact date range
+                            xaxis_tickformat='%b %d, %Y',     # Better date formatting
+                            hoverlabel=dict(
+                                bgcolor="white",
+                                font_size=12,
+                                font_family="Arial"
+                            )
+                        )
+
+                        # Display the chart
+                        st.plotly_chart(fig, use_container_width=True, use_container_height=True)
+                        
+                        # Project summary metrics
+                        progress = (completed_tasks / total_tasks) * 100 if total_tasks > 0 else 0
+                        status = "Completed" if progress == 100 else "In Progress" if progress > 0 else "Not Started"
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Tasks", total_tasks)
+                        with col2:
+                            st.metric("Completed Tasks", completed_tasks)
+                        with col3:
+                            st.metric("Progress", f"{progress:.1f}%", status)
+                        
+                        # Task timeline details table with standardized column names
+                        st.write("### Task Timeline Details")
+                        display_df = pd.DataFrame([{
+                            "Task": task[1],
+                            "Status": task[6],
+                            "Priority": task[7],
+                            "Planned Start Date": pd.to_datetime(task[2]).date() if task[2] else pd.to_datetime(start_date).date(),
+                            "Planned Deadline": pd.to_datetime(task[3]).date() if task[3] else pd.to_datetime(end_date).date(),
+                            "Actual Start Date": pd.to_datetime(task[4]).date() if task[4] else "Not started",
+                            "Actual Deadline": pd.to_datetime(task[5]).date() if task[5] else "Not completed",
+                            "Planned Duration": (pd.to_datetime(task[3]).date() - pd.to_datetime(task[2]).date()).days if task[2] and task[3] else "N/A",
+                            "Actual Duration": (pd.to_datetime(task[5]).date() - pd.to_datetime(task[4]).date()).days if task[4] and task[5] else "N/A",
+                            "Variance": "N/A" if not task[4] or not task[5] else 
+                                ((pd.to_datetime(task[5]).date() - pd.to_datetime(task[4]).date()).days - 
+                                (pd.to_datetime(task[3]).date() - pd.to_datetime(task[2]).date()).days)
+                        } for task in tasks])
+                        
+                        st.dataframe(
+                            display_df,
+                            column_config={
+                                "Planned Start Date": st.column_config.DateColumn("Planned Start Date"),
+                                "Planned Deadline": st.column_config.DateColumn("Planned Deadline"),
+                                "Actual Start Date": st.column_config.DateColumn("Actual Start Date"),
+                                "Actual Deadline": st.column_config.DateColumn("Actual Deadline"),
+                                "Planned Duration": st.column_config.NumberColumn("Planned Duration (days)"),
+                                "Actual Duration": st.column_config.NumberColumn("Actual Duration (days)"),
+                                "Variance": st.column_config.NumberColumn("Variance (days)")
+                            },
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Export functionality
+                        export_tab_data("Progress", display_df, fig)                                                           
+                    else:
+                        st.warning(f"No tasks found for project {name}")
+                else:
+                    st.warning("Project data not available")
+            else:
+                st.warning("Please select a specific project to view the Gantt chart (not 'All Projects')")
+
+
+        with tab2:  # Distribution tab
+            if not tasks_df.empty:
+                # Status/Priority Distribution
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig_status = px.pie(
+                        tasks_df,
+                        names="Status",
+                        title="Task Status Distribution",
+                        color_discrete_sequence=px.colors.qualitative.Pastel
+                    )
+                    st.plotly_chart(fig_status, use_container_width=True)
+                    
+                    # Prepare status data for export
+                    status_counts = tasks_df["Status"].value_counts().reset_index()
+                    status_counts.columns = ["Status", "Count"]
+                    export_tab_data("Status Distribution", status_counts, fig_status)
+                    
+                with col2:
+                    fig_priority = px.pie(
+                        tasks_df,
+                        names="Priority",
+                        title="Task Priority Distribution",
+                        color_discrete_sequence=px.colors.qualitative.Set2
+                    )
+                    st.plotly_chart(fig_priority, use_container_width=True)
+                    
+                    # Prepare priority data for export
+                    priority_counts = tasks_df["Priority"].value_counts().reset_index()
+                    priority_counts.columns = ["Priority", "Count"]
+                    export_tab_data("Priority Distribution", priority_counts, fig_priority)
+            else:
+                st.warning("No tasks found for visualization")
+
+        with tab3:  # Budget tab
+            if not tasks_df.empty:
+                # Budget Variance Visualization
+                st.write("### Budget Variance by Project")
+                budget_data = tasks_df.groupby("Project").agg({
+                    "Budget": "sum",
+                    "Actual Cost": "sum"
+                }).reset_index()
+                budget_data["Variance"] = budget_data["Budget"] - budget_data["Actual Cost"]
+                
+                fig_budget = px.bar(
+                    budget_data,
+                    x="Project",
+                    y=["Budget", "Actual Cost"],
+                    title="Budget vs Actual Cost",
+                    barmode="group",
+                    labels={"value": "Amount ($)", "variable": "Type"},
+                    color_discrete_map={
+                        "Budget": '#3498db',
+                        "Actual Cost": '#e74c3c'
+                    }
+                )
+                st.plotly_chart(fig_budget, use_container_width=True)
+                
+                # Variance breakdown
+                fig_variance = px.bar(
+                    budget_data,
+                    x="Project",
+                    y="Variance",
+                    title="Budget Variance (Budget - Actual)",
+                    color="Variance",
+                    color_continuous_scale=px.colors.diverging.RdBu,
+                    labels={"Variance": "Amount ($)"}
+                )
+                st.plotly_chart(fig_variance, use_container_width=True)
+                
+                # Export functionality
+                export_tab_data("Budget Analysis", budget_data, fig_budget)
+                export_tab_data("Budget Variance", budget_data, fig_variance)
+            else:
+                st.warning("No tasks found for budget analysis")
+
+        with tab4:  # Assignees tab
+            if not tasks_df.empty and "Assignee" in tasks_df.columns:
+                # Task Distribution by Assignee
+                st.write("### Task Distribution by Assignee")
+                assignee_dist = tasks_df["Assignee"].value_counts().reset_index()
+                assignee_dist.columns = ["Assignee", "Task Count"]
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig_assignee_pie = px.pie(
+                        assignee_dist,
+                        names="Assignee",
+                        values="Task Count",
+                        title="Tasks per Assignee",
+                        hole=0.4
+                    )
+                    st.plotly_chart(fig_assignee_pie, use_container_width=True)
+                    export_tab_data("Assignee Distribution", assignee_dist, fig_assignee_pie)
+                
+                with col2:
+                    fig_assignee_bar = px.bar(
+                        assignee_dist,
+                        x="Assignee",
+                        y="Task Count",
+                        title="Task Count by Assignee",
+                        color="Assignee"
+                    )
+                    st.plotly_chart(fig_assignee_bar, use_container_width=True)
+                    export_tab_data("Assignee Task Count", assignee_dist, fig_assignee_bar)
+            else:
+                st.warning("No assignee data available")
+
+        with tab5:  # Productivity tab
+            if not tasks_df.empty:
+                st.write("### Assignee Productivity Metrics")
+                
+                # Fetch assignee productivity data
+                if st.session_state.user_role == "Admin":
+                    productivity_query = """
+                        SELECT 
+                            u.username as Assignee,
+                            COUNT(t.id) as TotalTasks,
+                            SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) as CompletedTasks,
+                            SUM(t.time_spent) as TotalTimeSpent,
+                            AVG(julianday(t.deadline) - julianday(t.start_date)) as AvgDuration
+                        FROM tasks t
+                        LEFT JOIN users u ON t.assigned_to = u.id
+                        GROUP BY u.username
+                        ORDER BY CompletedTasks DESC
+                    """
+                    productivity_data = query_db(productivity_query)
+                else:
+                    productivity_query = """
+                        SELECT 
+                            u.username as Assignee,
+                            COUNT(t.id) as TotalTasks,
+                            SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) as CompletedTasks,
+                            SUM(t.time_spent) as TotalTimeSpent,
+                            AVG(julianday(t.deadline) - julianday(t.start_date)) as AvgDuration
+                        FROM tasks t
+                        LEFT JOIN users u ON t.assigned_to = u.id
+                        WHERE t.assigned_to = ?
+                        GROUP BY u.username
+                        ORDER BY CompletedTasks DESC
+                    """
+                    productivity_data = query_db(productivity_query, (st.session_state.user_id,))
+                
+                if productivity_data:
+                    # Create DataFrame
+                    productivity_df = pd.DataFrame(productivity_data, columns=[
+                        "Assignee", "Total Tasks", "Completed Tasks", "Time Spent (hours)", "Avg Duration (days)"
+                    ])
+                    
+                    # Calculate completion rate and efficiency
+                    productivity_df["Completion Rate"] = (productivity_df["Completed Tasks"] / productivity_df["Total Tasks"] * 100).round(1)
+                    productivity_df["Tasks/Hour"] = (productivity_df["Completed Tasks"] / productivity_df["Time Spent (hours)"]).round(2)
+                    
+                    # Display metrics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Most Productive", productivity_df.iloc[0]["Assignee"])
+                    with col2:
+                        st.metric("Highest Completion Rate", 
+                                f"{productivity_df['Completion Rate'].max()}%")
+                    with col3:
+                        st.metric("Most Efficient", 
+                                f"{productivity_df['Tasks/Hour'].max()} tasks/hour")
+                    
+                    # Display the productivity table
+                    st.dataframe(
+                        productivity_df,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    # Visualizations
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        # Completion Rate by Assignee
+                        fig_completion = px.bar(
+                            productivity_df,
+                            x="Assignee",
+                            y="Completion Rate",
+                            title="Completion Rate by Assignee",
+                            color="Completion Rate",
+                            color_continuous_scale=px.colors.sequential.Blues
+                        )
+                        st.plotly_chart(fig_completion, use_container_width=True)
+                        export_tab_data("Completion Rate", productivity_df, fig_completion)
+                    
+                    with col2:
+                        # Efficiency by Assignee
+                        fig_efficiency = px.bar(
+                            productivity_df,
+                            x="Assignee",
+                            y="Tasks/Hour",
+                            title="Task Efficiency (Tasks per Hour)",
+                            color="Tasks/Hour",
+                            color_continuous_scale=px.colors.sequential.Greens
+                        )
+                        st.plotly_chart(fig_efficiency, use_container_width=True)
+                        export_tab_data("Efficiency", productivity_df, fig_efficiency)
+                    
+                    # Time Spent vs Tasks Completed
+                    fig_time_vs_tasks = px.scatter(
+                        productivity_df,
+                        x="Time Spent (hours)",
+                        y="Completed Tasks",
+                        size="Total Tasks",
+                        color="Assignee",
+                        title="Time Spent vs Tasks Completed",
+                        hover_name="Assignee",
+                        labels={
+                            "Time Spent (hours)": "Time Spent (hours)",
+                            "Completed Tasks": "Completed Tasks"
+                        }
+                    )
+                    st.plotly_chart(fig_time_vs_tasks, use_container_width=True)
+                    export_tab_data("Time vs Tasks", productivity_df, fig_time_vs_tasks)
+                else:
+                    st.warning("No productivity data available")
+            else:
+                st.warning("No tasks found for productivity analysis")
+
+        # ======= Global Export Options =======
+        st.markdown("---")
+        st.subheader("📤 Export All Data")
+        with st.expander("💾 Comprehensive Export Options", expanded=False):
+            if not tasks_df.empty:
+                st.download_button(
+                    label="Download All Task Data as CSV",
+                    data=tasks_df.to_csv(index=False),
+                    file_name="all_task_data.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.warning("No task data available for export")
+
+
+
+
+    # Projects Page
+    elif page == "Projects":
+        st.markdown("---")
+        
+
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+        </style>
+        """, unsafe_allow_html=True)
+
+
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">📂 Projects</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)  
+        
+        # Initialize success message state
         if 'show_project_success' not in st.session_state:
             st.session_state.show_project_success = False
         
-        # Display success message if flag is True (this needs to be at the very top)
+        # Display success message if flag is True
         if st.session_state.show_project_success:
             st.success("Project added successfully!")
-            st.session_state.show_project_success = False  # Reset the flag
+            st.session_state.show_project_success = False
         
-        # Fetch all registered users for the project owner dropdown
+        # Fetch all users for owner dropdown
         users = query_db("SELECT id, username FROM users")
-        user_options = {user[0]: user[1] for user in users}  # {user_id: username}
+        user_options = {user[0]: user[1] for user in users}
 
-        # Add New Project - using a form key that changes after submission
-        form_key = "project_form_" + str(st.session_state.get('form_counter', 0))
-        with st.form(key=form_key):
-            name = st.text_input("Project Name", key="project_name")
-            description = st.text_area("Description", key="project_description")
-            
-            # Project Owner Dropdown
-            project_owner = st.selectbox(
-                "Project Owner",
-                options=list(user_options.values()),
-                format_func=lambda x: user_options.get(x, x)
-            )
-            
-            # Project Start and Due Dates
-            start_date = st.date_input("Start Date", key="project_start_date")
-            due_date = st.date_input("Due Date", key="project_due_date")
-            
-            # Project Budget
-            budget = st.number_input("Project Budget", min_value=0.0, value=0.0, key="project_budget")
-            
-            submitted = st.form_submit_button("➕ Add Project")
-            if submitted:
-                # Get the selected project owner's ID
-                project_owner_id = [user_id for user_id, username in user_options.items() if username == project_owner][0]
-                
-                # Insert the new project into the database
-                query_db("""
-                    INSERT INTO projects (user_id, name, description, start_date, end_date, budget)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    project_owner_id, name, description, start_date, due_date, budget
-                ))
-                
-                # Set the success flag and increment form counter
-                st.session_state.show_project_success = True
-                st.session_state.form_counter = st.session_state.get('form_counter', 0) + 1
-                
-                # Force a rerun
-                st.rerun()
         
-        # Display Projects as Cards
-        display_projects_as_cards()
+        # In the Projects page section, modify the "Add New Project" form as follows:
 
+        # ======= Add New Project Section =======
+        st.subheader("➕ Add New Project")
 
+        # Only show the project creation form if user is admin
+        if st.session_state.user_role == "Admin":
 
-
-# Tasks Page
-    elif page == "Tasks":
-        st.title("✅ Tasks")
-        
-        # Fetch upcoming and overdue tasks
-        upcoming_tasks, overdue_tasks = get_upcoming_and_overdue_tasks()
-        
-        # Collapsible section for Overdue Tasks
-        with st.expander("⚠️ Overdue Tasks", expanded=False):
-            if overdue_tasks:
-                for task in overdue_tasks:
-                    priority = task[8] if len(task) > 8 else "Medium"
-                    color = priority_colors.get(priority, "#000000")
-                    st.markdown(f"""
-                        <p style="color: {color};">
-                            - <strong>{task[2]}</strong> (Deadline: {task[6]})
-                        </p>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("No overdue tasks.")
-        
-        # Collapsible section for Upcoming Tasks
-        with st.expander("🔜 Upcoming Tasks", expanded=False):
-            if upcoming_tasks:
-                for task in upcoming_tasks:
-                    priority = task[8] if len(task) > 8 else "Medium"
-                    color = priority_colors.get(priority, "#000000")
-                    st.markdown(f"""
-                        <p style="color: {color};">
-                            - <strong>{task[2]}</strong> (Deadline: {task[6]})
-                        </p>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("No upcoming tasks.")
-        
-        # Add New Task Form
-        with st.form("new_task"):
-            projects = get_projects()
-            project_names = [project[2] for project in projects]
-            selected_project = st.selectbox("Select Project", project_names)
-            title = st.text_input("Task Title")
-            description = st.text_area("Description")
-            start_date = st.date_input("Start Date")
-            deadline = st.date_input("Deadline")
-            priority = st.selectbox("Priority", ["High", "Medium", "Low"])
-            recurrence = st.selectbox("Recurrence", ["None", "Daily", "Weekly", "Monthly"])
-            budget = st.number_input("Budget", min_value=0.0, value=0.0)
-            actual_cost = st.number_input("Actual Cost", min_value=0.0, value=0.0)
-            budget_variance = st.number_input("Budget Variance", value=budget - (actual_cost if actual_cost is not None else 0.0), disabled=True)
-            
-            # Fetch team members (users) from the database
-            team_members = query_db("SELECT id, username FROM users WHERE role='User' OR role='Admin'")
-            
-            # Assign task to a team member
-            assigned_to = st.selectbox("Assign to", [member[1] for member in team_members], index=0)
-            
-            # Add a submit button
-            if st.form_submit_button("➕ Add Task"):
-                project_id = query_db("SELECT id FROM projects WHERE name=? AND user_id=?", (selected_project, st.session_state.user_id), one=True)[0]
-                assigned_to_id = query_db("SELECT id FROM users WHERE username=?", (assigned_to,), one=True)[0]
-                query_db("INSERT INTO tasks (project_id, title, description, start_date, deadline, priority, recurrence, assigned_to, budget, actual_cost, budget_variance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (project_id, title, description, start_date, deadline, priority, recurrence.lower() if recurrence != "None" else None, assigned_to_id, budget, actual_cost, budget - (actual_cost if actual_cost is not None else 0.0)))
-                st.success("Task added successfully!")
-                st.rerun()
-
-        # Display the Task Table with Project Filter
-        st.subheader("Task Management Table")
-        tasks_df = display_task_table()  # Fetch tasks DataFrame
-        
-        # Add Visualizations
-        st.subheader("📊 Visualizations")
-        
-        # Task Status Distribution (Pie Chart)
-        st.write("### Task Status Distribution")
-        plot_task_status_distribution(tasks_df)
-        
-        # Task Priority Distribution (Bar Chart)
-        st.write("### Task Priority Distribution")
-        plot_task_priority_distribution(tasks_df)
-        
-        # Task Progress Over Time (Line Chart)
-        st.write("### Task Progress Over Time")
-        plot_task_progress_over_time(tasks_df)
-        
-        # Upcoming vs Overdue Tasks (Bar Chart)
-        st.write("### Upcoming vs Overdue Tasks")
-        plot_upcoming_vs_overdue_tasks(tasks_df)
-        
-        # Budget Tracking (Bar Chart)
-        st.write("### Budget Tracking")
-        plot_budget_tracking(tasks_df)
-
-        # Add main title above "Total Projects in database"
-        st.header("Edit Project Tasks")  # Main title
-
-        # Fetch all projects for the logged-in user
-        projects = get_projects()
-        st.write(f"**Total Projects in database:** {len(projects)}")
-        
-        if not projects:
-            st.warning("No projects found in the database.")
-        else:
-            # Group tasks by project
-            for project in projects:
-                with st.expander(f"Project: {project[2]}", expanded=True):  
-                    st.write(f"**Description:** {project[3]}")
-                    st.write(f"**Start Date:** {project[4]} | **End Date:** {project[5]}")
+            with st.expander("Create New Project", expanded=False):
+                with st.form(key="add_project_form", clear_on_submit=True):
+                    name = st.text_input("Project Name*", help="Project name must be unique (case-insensitive)")
+                    description = st.text_area("Description")
                     
-                    # Fetch tasks for the current project
-                    tasks = get_tasks(project[0])
-                    st.write(f"**Tasks for project {project[2]}:**")
+                    # Project Owner Dropdown
+                    project_owner = st.selectbox(
+                        "Project Owner*",
+                        options=list(user_options.values()),
+                        format_func=lambda x: user_options.get(x, x)
+                    )
                     
-                    if not tasks:
-                        st.warning("No tasks found for this project.")
-                    else:
-                        # Use the custom drag-and-drop component for tasks
-                        drag_and_drop(tasks)
-
-
-
-
-            
-
-           # Inside the task display loop
-            projects = get_projects()
-            for project in projects:
-                tasks = get_tasks(project[0])
-                
-                if not tasks:
-                    continue  # Skip projects with no assignee tasks
+                    # Project Dates
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        start_date = st.date_input("Start Date*")
+                    with col2:
+                        due_date = st.date_input("Due Date*")
                     
-                with st.expander(f"Project: {project[2]}"):
-                    for task in tasks:
-                        # Only show tasks where user is assignee
-                        if not is_task_assignee(task):
-                            continue
+                    # Project Budget
+                    budget = st.number_input("Project Budget", min_value=0.0, value=0.0)
+                    
+                    if st.form_submit_button("Add Project"):
+                        # Validate required fields
+                        if not name.strip():
+                            st.error("Project name is required")
+                        elif due_date < start_date:
+                            st.error("Due date must be on or after the start date")
+                        else:
+                            # Check for existing project name (case-insensitive)
+                            existing_project = query_db(
+                                "SELECT 1 FROM projects WHERE LOWER(name) = LOWER(?)", 
+                                (name.strip(),), 
+                                one=True
+                            )
                             
-                        # Display task info (read-only)
-                        st.subheader(task[2])
-                        st.caption(f"Project: {project[2]}")
-                        
-                        # COMPLETE EDIT FORM
-                        with st.form(f"full_edit_{task[0]}"):
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                new_title = st.text_input("Title", value=task[2])
-                                new_desc = st.text_area("Description", value=task[3], height=100)
-                                new_priority = st.selectbox(
-                                    "Priority", 
-                                    ["High", "Medium", "Low"],
-                                    index=["High", "Medium", "Low"].index(task[8]) if task[8] in ["High", "Medium", "Low"] else 1
-                                )
-                                
-                            with col2:
-                                new_start = st.date_input(
-                                    "Start Date",
-                                    value=datetime.strptime(task[11], "%Y-%m-%d").date() if task[11] else datetime.now().date()
-                                )
-                                new_deadline = st.date_input(
-                                    "Deadline",
-                                    value=datetime.strptime(task[6], "%Y-%m-%d").date() if task[6] else datetime.now().date()
-                                )
-                                new_status = st.selectbox(
-                                    "Status",
-                                    ["Pending", "In Progress", "Completed"],
-                                    index=["Pending", "In Progress", "Completed"].index(task[4])
-                                )
-                            
-                            # Bottom section
-                            new_budget = st.number_input("Budget", value=float(task[12]) if task[12] else 0.0)
-                            new_actual = st.number_input("Actual Cost", value=float(task[13]) if task[13] else 0.0)
-                            st.number_input("Variance", value=new_budget-new_actual, disabled=True)
-                            
-                            if st.form_submit_button("Save Changes"):
+                            if existing_project:
+                                st.error(f"A project with name '{name.strip()}' already exists (case-insensitive check)")
+                            else:
+                                project_owner_id = [user_id for user_id, username in user_options.items() if username == project_owner][0]
                                 query_db("""
-                                    UPDATE tasks SET
-                                        title=?, description=?, priority=?,
-                                        start_date=?, deadline=?, status=?,
-                                        budget=?, actual_cost=?, budget_variance=?
-                                    WHERE id=?
-                                """, (
-                                    new_title, new_desc, new_priority,
-                                    new_start, new_deadline, new_status,
-                                    new_budget, new_actual, new_budget-new_actual,
-                                    task[0]
-                                ))
+                                    INSERT INTO projects (user_id, name, description, start_date, end_date, budget)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, (project_owner_id, name.strip(), description, start_date, due_date, budget))
+                                st.session_state.show_project_success = True
                                 st.rerun()
+
+        else:
+            st.warning("⛔ Only administrators can create new projects. Please contact your admin.")                       
+        
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+
+        
+
+        
+        # ======= Project Analytics Section =======
+        st.subheader("📂 Select Project")
+
+
+        # First fetch all project data (same as before)
+        projects_data = query_db("""
+            SELECT 
+                p.id, 
+                p.user_id as owner_id, 
+                p.name, 
+                p.description, 
+                p.start_date as planned_start_date,
+                p.end_date as planned_deadline,
+                p.budget,
+                ROUND(COALESCE(SUM(t.actual_cost), 0)) as actual_cost,
+                ROUND(p.budget - COALESCE(SUM(t.actual_cost), 0)) as budget_variance,
+                COUNT(t.id) as task_count,
+                SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) as completed_tasks,
+                u.username as owner_name,
+                (ROUND(SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) * 100.0 / 
+                NULLIF(COUNT(t.id), 0), 2)) as completion_pct,
+                julianday(p.end_date) - julianday(p.start_date) as planned_duration,
+                CASE
+                    WHEN MIN(t.actual_start_date) IS NULL OR MAX(t.actual_deadline) IS NULL THEN NULL
+                    ELSE julianday(MAX(t.actual_deadline)) - julianday(MIN(t.actual_start_date))
+                END as actual_duration
+            FROM projects p
+            LEFT JOIN tasks t ON t.project_id = p.id
+            LEFT JOIN users u ON p.user_id = u.id
+            GROUP BY p.id
+        """)
+
+        # Convert to DataFrame
+        project_df = pd.DataFrame(projects_data, columns=[
+            "ID", "Owner ID", "Project", "Description", "Planned Start Date", "Planned Deadline",
+            "Budget", "Actual Cost", "Budget Variance", "Total Tasks",
+            "Completed Tasks", "Owner", "Completion %",
+            "Planned Duration (days)", "Actual Duration (days)"
+        ])
+
+        # Ensure date columns are proper datetime objects
+        project_df["Planned Start Date"] = pd.to_datetime(project_df["Planned Start Date"])
+        project_df["Planned Deadline"] = pd.to_datetime(project_df["Planned Deadline"])
+
+        # Create filter widgets - matching your task page style but simplified
+        with st.expander("🔍 Filter Projects", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Project filter - matches your task page dropdown style
+                project_options = ['All Projects'] + sorted(project_df['Project'].unique().tolist())
+                selected_project = st.selectbox(
+                    "Filter by Project", 
+                    project_options,
+                    key="project_filter"
+                )
+            
+            with col2:
+                # Owner filter - matches your task page dropdown style
+                owner_options = ['All Owners'] + sorted(project_df['Owner'].dropna().unique().tolist())
+                selected_owner = st.selectbox(
+                    "Filter by Owner",
+                    owner_options,
+                    key="owner_filter"
+                )
+
+        # Apply filters - same logic as your task page but simplified
+        filtered_df = project_df.copy()
+
+        if selected_project != 'All Projects':
+            filtered_df = filtered_df[filtered_df['Project'] == selected_project]
+
+        if selected_owner != 'All Owners':
+            filtered_df = filtered_df[filtered_df['Owner'] == selected_owner]
+
+        # Display the filtered table with same styling as your task page
+        st.subheader("📊 Project Analytics")
+
+        # Create a copy for display with formatted currency values
+        display_df = filtered_df.copy()
+
+        # Format currency columns as whole numbers (matches your task page style)
+        display_df["Actual Cost"] = display_df["Actual Cost"].apply(
+            lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+        )
+        display_df["Budget Variance"] = display_df["Budget Variance"].apply(
+            lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+        )
+        display_df["Budget"] = display_df["Budget"].apply(
+            lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+        )
+
+        # Format durations (matches your task page style)
+        display_df["Planned Duration"] = display_df["Planned Duration (days)"].apply(
+            lambda x: f"{float(x):.1f} days" if pd.notnull(x) else "N/A"
+        )
+        display_df["Actual Duration"] = display_df["Actual Duration (days)"].apply(
+            lambda x: f"{float(x):.1f} days" if pd.notnull(x) else "N/A"
+        )
+
+        # Display the formatted table (matches your task page style)
+        st.dataframe(
+            display_df[[
+                "Project", "Owner", "Planned Start Date", "Planned Deadline",
+                "Planned Duration", "Actual Duration", "Total Tasks",
+                "Completed Tasks", "Completion %", "Budget", "Actual Cost",
+                "Budget Variance"
+            ]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Planned Start Date": st.column_config.DateColumn("Planned Start Date"),
+                "Planned Deadline": st.column_config.DateColumn("Planned Deadline"),
+                "Completion %": st.column_config.NumberColumn(
+                    "Completion %",
+                    format="%.1f%%",
+                    min_value=0,
+                    max_value=100
+                )
+            }
+        )
+
+        st.write("</div>", unsafe_allow_html=True)  # Close the styled container
+
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+
+
+        # Visualization Tabs (controlled by the same filters)
+        tab1, tab2, tab3, tab4 = st.tabs(["Timeline", "Budget", "Analytics", "Duration"])
+
+        # In your Projects page section where you have tabs:
+        with tab1:  # Timeline tab
+            # First ensure the dataframe has the correct columns
+            if all(col in project_df.columns for col in ['Planned Start Date', 'Planned Deadline']):
+                plot_project_timeline(project_df)
+            else:
+                st.error("Required columns for timeline visualization not found in data")
+
+        with tab2:  # Budget tab
+            plot_budget_comparison(project_df)
+            plot_project_health(project_df)
+
+        with tab3:  # Analytics tab
+            plot_completion_heatmap(project_df)
+            plot_duration_variance(project_df)
+
+        with tab4:  # Add this as a new tab in your existing tab structure
+            st.subheader("⏱️ Duration Analysis")
+            # plot_plan_vs_actual_gantt(project_df)
+            # plot_duration_variance(project_df)
+            plot_duration_comparison(project_df)
+                
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+
+
+        
+        
+        # ======= Project List Section =======
+        st.subheader("📋 Project List")
+
+        # Add custom CSS for card styling
+        st.markdown("""
+        <style>
+            /* Card styling */
+            [data-testid="stVerticalBlock"] > [style*="flex-direction: column"] {
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 16px;
+                margin-bottom: 20px;
+                background-color: #FFFFFF;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            
+            /* Status indicator */
+            .status-indicator {
+                margin-top: 10px;
+                padding-top: 8px;
+                border-top: 1px solid #f0f0f0;
+            }
+            
+            /* Select box styling */
+            [data-testid="stSelectbox"] {
+                margin-bottom: 20px;
+            }
+            
+            /* Overdue project styling */
+            .overdue-card {
+                background-color: #FFEBEE !important;
+                border-left: 4px solid #D32F2F !important;
+            }
+            
+            /* On-track project styling */
+            .ontrack-card {
+                background-color: #E8F5E9 !important;
+                border-left: 4px solid #388E3C !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)            
+            
+
+        # Fetch all projects with additional details
+        projects = query_db("""
+            SELECT p.id, p.user_id, p.name, p.description, p.start_date, p.end_date, p.budget, 
+                u.username as owner_name
+            FROM projects p
+            LEFT JOIN users u ON p.user_id = u.id
+            ORDER BY p.name
+        """)
+
+        # Get user options for owner dropdown
+        users = query_db("SELECT id, username FROM users")
+        user_options = {user[0]: user[1] for user in users}
+
+        # Replace text search with dropdown selection
+        project_names = ["All Projects"] + [p[2] for p in projects]  # p[2] is the project name
+        selected_project = st.selectbox("🔍 Filter Projects", project_names)
+
+        # Get filtered projects
+        if selected_project == "All Projects":
+            filtered_projects = projects
+        else:
+            filtered_projects = [p for p in projects if p[2] == selected_project]
+
+        if not filtered_projects:
+            st.info("No projects found matching your selection.")
+        else:
+            # Display projects in a grid of cards
+            cols = st.columns(3)  # 3 columns for the grid
+            for idx, project in enumerate(filtered_projects):
+                project_id, owner_id, name, description, start_date, end_date, budget, owner_username = project
+                
+                # Format dates and budget
+                start_fmt = datetime.strptime(start_date, "%Y-%m-%d").strftime("%b %d, %Y") if start_date else "Not set"
+                end_fmt = datetime.strptime(end_date, "%Y-%m-%d").strftime("%b %d, %Y") if end_date else "Not set"
+                budget_fmt = f"${float(budget):,.2f}" if budget else "Not set"
+                
+                # Check if project is overdue
+                today = datetime.now().date()
+                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else today
+                is_overdue = end_date_obj < today
+               
+                
+                # In your project card section, modify the container to include the dynamic class:
+                # card_class = "overdue-card" if is_overdue else "ontrack-card"
+
+                
+                with cols[idx % 3]:  # Distribute across columns
+                    # Create a card container
+                    with st.container():
+                        card_class = "overdue-card" if is_overdue else "ontrack-card"
+                        # Card header with title and ID
+                        st.markdown(f"""
+                        <div class="{card_class}" style="padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <h3 style="margin: 0; color: #2c3e50;">{name}</h3>
+                            <span style="font-size: 0.8rem; color: #666;">ID: {project_id}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                         
-                        # Delete button
-                        if st.button(f"Delete This Task", key=f"del_{task[0]}"):
-                            delete_task(task[0])
+                        # Project description
+                        st.caption(description or "No description provided")
+                        
+                        # Project details
+                        st.write(f"**Owner:** {owner_username}")
+                        st.write(f"**Timeline:** {start_fmt} → {end_fmt}")
+                        st.write(f"**Budget:** {budget_fmt}")
+                        
+                        # Status indicator
+                        status_color = "#D32F2F" if is_overdue else "#388E3C"
+                        status_text = "⚠️ Overdue" if is_overdue else "🟢 On track"
+                        st.markdown(f"""
+                        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #f0f0f0;">
+                            <span style="color: {status_color}; font-weight: 500;">{status_text}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Action buttons - Only show if admin or project owner
+                        show_edit = st.session_state.user_role == "Admin" or owner_id == st.session_state.user_id
+                        show_delete = st.session_state.user_role == "Admin"
+                        
+                        if show_edit or show_delete:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if show_edit and st.button("✏️ Edit", key=f"edit_{project_id}"):
+                                    st.session_state['editing_project_id'] = project_id
+                                    st.rerun()
+                            with col2:
+                                if show_delete and st.button("🗑️ Delete", key=f"delete_{project_id}", type="primary"):
+                                    st.session_state['deleting_project_id'] = project_id
+                                    st.rerun()
+
+        # Edit Form Modal - This needs to be OUTSIDE the card display loop
+        if 'editing_project_id' in st.session_state and st.session_state.editing_project_id:
+            project_id = st.session_state.editing_project_id
+            project = next((p for p in projects if p[0] == project_id), None)
+            
+            if project:
+                # Create a modal-like container
+                with st.expander(f"✏️ Editing Project: {project[2]}", expanded=True):
+                    with st.form(f"edit_form_{project_id}"):
+                        new_name = st.text_input("Name", value=project[2])
+                        new_desc = st.text_area("Description", value=project[3])
+                        
+                        if st.session_state.user_role == "Admin":
+                            current_owner_name = user_options.get(project[1], "Unknown")
+                            new_owner_name = st.selectbox(
+                                "Owner",
+                                options=list(user_options.values()),
+                                index=list(user_options.values()).index(current_owner_name) if current_owner_name in user_options.values() else 0
+                            )
+                            new_owner_id = [uid for uid, uname in user_options.items() if uname == new_owner_name][0]
+                        else:
+                            new_owner_id = project[1]
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            new_start = st.date_input("Start Date", value=datetime.strptime(project[4], "%Y-%m-%d").date())
+                        with col2:
+                            new_end = st.date_input("Due Date", value=datetime.strptime(project[5], "%Y-%m-%d").date())
+                        
+                        new_budget = st.number_input("Budget", value=float(project[6]) if project[6] else 0.0, step=0.01)
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("💾 Save Changes"):
+                                query_db("""
+                                    UPDATE projects SET 
+                                    name=?, description=?, user_id=?, 
+                                    start_date=?, end_date=?, budget=?
+                                    WHERE id=?
+                                """, (new_name, new_desc, new_owner_id, 
+                                    new_start, new_end, new_budget, project_id))
+                                st.session_state.pop('editing_project_id', None)
+                                st.success("Project updated successfully!")
+                                st.rerun()
+                        with col2:
+                            if st.form_submit_button("❌ Cancel"):
+                                st.session_state.pop('editing_project_id', None)
+                                st.rerun()
+
+        # Delete Confirmation Modal - Also needs to be OUTSIDE the card display loop
+        if 'deleting_project_id' in st.session_state and st.session_state.deleting_project_id:
+            project_id = st.session_state.deleting_project_id
+            project = next((p for p in projects if p[0] == project_id), None)
+            
+            if project:
+                # Create a modal-like container
+                with st.expander(f"🗑️ Delete Project: {project[2]}", expanded=True):
+                    st.warning("⚠️ This action cannot be undone!")
+                    st.error("All associated tasks and data will be permanently deleted!")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ Confirm Deletion", key=f"confirm_delete_{project_id}", type="primary"):
+                            delete_project(project_id)
+                            st.session_state.pop('deleting_project_id', None)
+                            st.success("Project deleted successfully!")
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ Cancel", key=f"cancel_delete_{project_id}"):
+                            st.session_state.pop('deleting_project_id', None)
                             st.rerun()
 
 
 
 
 
-                            # Deadline Tracking
-                            deadline_status = get_task_status(task[6])
-                            if deadline_status == "Overdue":
-                                st.error(f"⚠️ Overdue: Deadline was {task[6]}")
-                            elif deadline_status == "Upcoming":
-                                st.warning(f"🔜 Upcoming: Deadline is {task[6]}")
-                            else:
-                                st.success(f"✅ On Track: Deadline is {task[6]}")
-
-
-
-                            # Task Editing Form
-                            # EDIT FORM - PROPERLY SCOPE ALL VARIABLES
-                            with st.form(f"edit_task_{task[0]}"):
-                                col1, col2 = st.columns(2)
-                                
-                                with col1:
-                                    new_title = st.text_input("Task Title", value=task[2])
-                                    new_description = st.text_area("Description", value=task[3], height=100)
-                                    new_priority = st.selectbox(
-                                        "Priority",
-                                        ["High", "Medium", "Low"],
-                                        index=["High", "Medium", "Low"].index(task[8]) if task[8] in ["High", "Medium", "Low"] else 1
-                                    )
-                                    
-                                with col2:
-                                    new_start_date = st.date_input(
-                                        "Start Date",
-                                        value=datetime.strptime(task[11], "%Y-%m-%d").date() if task[11] else datetime.now().date()
-                                    )
-                                    new_deadline = st.date_input(
-                                        "Deadline", 
-                                        value=datetime.strptime(task[6], "%Y-%m-%d").date() if task[6] else datetime.now().date()
-                                    )
-                                    new_status = st.selectbox(
-                                        "Status",
-                                        ["Pending", "In Progress", "Completed"],
-                                        index=["Pending", "In Progress", "Completed"].index(task[4])
-                                    )
-                                
-                                # Budget Section
-                                st.subheader("Budget Tracking")
-                                budget_col1, budget_col2, budget_col3 = st.columns(3)
-                                with budget_col1:
-                                    new_budget = st.number_input(
-                                        "Budget ($)", 
-                                        min_value=0.0, 
-                                        value=float(task[12]) if task[12] is not None else 0.0
-                                    )
-                                with budget_col2:
-                                    new_actual_cost = st.number_input(
-                                        "Actual Cost ($)", 
-                                        min_value=0.0, 
-                                        value=float(task[13]) if task[13] is not None else 0.0
-                                    )
-                                with budget_col3:
-                                    new_budget_variance = st.number_input(
-                                        "Variance ($)", 
-                                        value=new_budget - new_actual_cost,
-                                        disabled=True
-                                    )
-                                
-                                # Assignment and Recurrence
-                                team_members = query_db("SELECT id, username FROM users")
-                                current_assignee = task[10] if len(task) > 10 else None
-                                new_assignee = st.selectbox(
-                                    "Assigned To",
-                                    [member[1] for member in team_members],
-                                    index=[m[0] for m in team_members].index(current_assignee) if current_assignee else 0
-                                )
-                                
-                                new_recurrence = st.selectbox(
-                                    "Recurrence",
-                                    ["None", "Daily", "Weekly", "Monthly"],
-                                    index=["None", "Daily", "Weekly", "Monthly"].index(task[9]) if task[9] in ["None", "Daily", "Weekly", "Monthly"] else 0
-                                )
-
-                                if st.form_submit_button("Update Task"):
-                                    if user_can_edit_task(task):
-                                        try:
-                                            assigned_to_id = [m[0] for m in team_members if m[1] == new_assignee][0]
-                                            query_db("""
-                                                UPDATE tasks SET
-                                                    title=?, description=?, priority=?,
-                                                    start_date=?, deadline=?, status=?,
-                                                    budget=?, actual_cost=?, budget_variance=?,
-                                                    assigned_to=?, recurrence=?
-                                                WHERE id=?
-                                            """, (
-                                                new_title, new_description, new_priority,
-                                                new_start_date, new_deadline, new_status,
-                                                new_budget, new_actual_cost, new_budget_variance,
-                                                assigned_to_id, new_recurrence if new_recurrence != "None" else None,
-                                                task[0]
-                                            ))
-                                            st.success("Task updated successfully!")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"Error updating task: {str(e)}")
-                                    else:
-                                        st.warning("You don't have permission to edit this task")
-
-
-
-
-
-
-    # Reports Page
-    elif page == "Reports":
-        st.title("📊 Reports")
-
-        # Summary Statistics
-        st.subheader("📊 Summary")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            total_tasks = len(get_tasks())
-            st.metric("Total Tasks", total_tasks)
-        with col2:
-            completed_tasks = len([task for task in get_tasks() if task[4] == "Completed"])
-            st.metric("Completed Tasks", completed_tasks)
-        with col3:
-            overdue_tasks = len(get_upcoming_and_overdue_tasks()[1])
-            st.metric("Overdue Tasks", overdue_tasks)
-
-        # Project Health Dashboard
-        st.subheader("📈 Project Health Dashboard")
+    # Tasks Page
+    elif page == "Tasks":
+        st.markdown("---")
         
-        # Fetch all projects for the logged-in user
-        projects = get_projects()
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+        </style>
+        """, unsafe_allow_html=True)
+
+
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">✅ Task Management</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        if not projects:
-            st.warning("No projects found in the database.")
+        # ======= Section Divider =======
+        # ======= Section Divider =======
+        # ======= Section Divider =======
+        st.markdown("---")
+        st.header("📂 Create New Tasks")
+
+        # Get all projects for admin, or only owned projects for non-admin
+        if st.session_state.user_role == "Admin":
+            projects = query_db("SELECT id, name, user_id FROM projects ORDER BY name")
         else:
-            # Create columns for each project's health metrics
-            for project in projects:
-                with st.expander(f"Project: {project[2]}", expanded=False):
-                    # Fetch tasks for the current project
-                    tasks = get_tasks(project[0])
-                    
-                    if not tasks:
-                        st.warning("No tasks found for this project.")
+            projects = query_db("SELECT id, name, user_id FROM projects WHERE user_id = ? ORDER BY name", 
+                            (st.session_state.user_id,))
+
+        # Only show the task creation form if user is admin or has owned projects
+        if st.session_state.user_role == "Admin" or projects:
+            with st.expander("➕ Create New Task", expanded=False):
+                with st.form(key="create_task_form", clear_on_submit=True):
+                    # Create project dropdown options
+                    if st.session_state.user_role == "Admin":
+                        project_options = [project[1] for project in projects]  # All projects for admin
                     else:
-                        # Calculate metrics
-                        total_tasks = len(tasks)
-                        completed_tasks = len([task for task in tasks if task[4] == "Completed"])
-                        overdue_tasks = len([task for task in tasks if task[4] != "Completed" and datetime.strptime(task[6], "%Y-%m-%d").date() < datetime.today().date()])
-                        
-                        # On-time completion rate
-                        on_time_completion_rate = (completed_tasks / total_tasks) * 100 if total_tasks > 0 else 0
-                        
-                        # Budget utilization
-                        total_budget = sum([task[12] for task in tasks if task[12] is not None])  # Sum of all task budgets
-                        actual_cost = sum([task[13] for task in tasks if task[13] is not None])  # Sum of all actual costs
-                        budget_utilization = (actual_cost / total_budget) * 100 if total_budget > 0 else 0
-                        
-                        # Display metrics in columns
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("On-Time Completion Rate", f"{on_time_completion_rate:.1f}%")
-                        with col2:
-                            st.metric("Overdue Tasks", overdue_tasks)
-                        with col3:
-                            st.metric("Budget Utilization", f"{budget_utilization:.1f}%")
-                        
-                        # Progress bar for budget utilization
-                        st.progress(int(budget_utilization))
-                        st.write(f"**Budget Used:** ${actual_cost:.2f} / ${total_budget:.2f}")
+                        project_options = [project[1] for project in projects]  # Only owned projects
+                    
+                    selected_project = st.selectbox("Project*", project_options)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        title = st.text_input("Task Title*", placeholder="Enter task name")
+                        start_date = st.date_input("Start Date*")
+                    with col2:
+                        priority = st.selectbox("Priority*", ["High", "Medium", "Low"])
+                        deadline = st.date_input("Deadline*")
+                        budget = st.number_input("Budget ($)", min_value=0.0, value=0.0, step=0.01)
+                    
+                    description = st.text_area("Description", placeholder="Enter detailed task description")
+                    
+                    spent_time = st.number_input("Time Spent (hours)", min_value=0.0, value=0.0, step=0.5)
+                    
+                    # Get all users for assignment dropdown
+                    team_members = query_db("SELECT id, username FROM users ORDER BY username")
+                    assigned_to = st.selectbox("Assign To*", [member[1] for member in team_members])
+                    
+                    submitted = st.form_submit_button("Create Task")
+                    
+                    if submitted:
+                        # Validate all required fields
+                        if not title.strip():
+                            st.error("Task title is required")
+                        elif deadline < start_date:
+                            st.error("Deadline must be on or after the start date")
+                        else:
+                            project_id = query_db("SELECT id FROM projects WHERE name = ?", (selected_project,), one=True)[0]
+                            assigned_to_id = query_db("SELECT id FROM users WHERE username = ?", (assigned_to,), one=True)[0]
+                            
+                            query_db("""
+                                INSERT INTO tasks 
+                                (project_id, title, description, start_date, deadline, priority, 
+                                assigned_to, budget, time_spent)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                project_id, title.strip(), description, start_date, deadline, 
+                                priority, assigned_to_id, budget, spent_time
+                            ))
+                            
+                            # Show both toast and success message for reliability
+                            try:
+                                st.toast("✅ Task created successfully!", icon="✅")
+                            except:
+                                pass  # Fallback if toast isn't available
+                            
+                            st.success("Task created successfully!")
+                            
+                            # Add slight delay before refresh to ensure message is seen
+                            time.sleep(1.5)
+                            st.rerun()
+        else:
+            st.warning("⛔ You don't have permission to create tasks. Only project owners can create tasks for their projects.")
 
-        # Budget Variance by Project
-        st.subheader("📉 Budget Variance by Project")
+
+
+        # ======= Section Divider =======
         
+        # ======= Project Tasks Section =======
+
+        # Display Project Tasks Section
+        st.markdown("---")
+        st.header("📋 Project Tasks")
+
+        projects = get_projects()
+
         if not projects:
             st.warning("No projects found in the database.")
         else:
-            # Calculate budget variance for each project
-            budget_variance_data = []
-            for project in projects:
-                tasks = get_tasks(project[0])
-                if tasks:
-                    total_budget = sum([task[12] for task in tasks if task[12] is not None])  # Sum of all task budgets
-                    actual_cost = sum([task[13] for task in tasks if task[13] is not None])  # Sum of all actual costs
-                    budget_variance = total_budget - actual_cost
-                    budget_variance_data.append({
-                        "Project": project[2],  # Project name
-                        "Budget Variance": budget_variance
-                    })
+            # Create dropdown for project selection
+            project_options = ["Select a project..."] + [project[2] for project in projects]
+            selected_project = st.selectbox("Select Project to View Tasks", project_options)
             
-            if budget_variance_data:
-                # Convert to DataFrame
-                budget_variance_df = pd.DataFrame(budget_variance_data)
+            if selected_project != "Select a project...":
+                project_id = query_db("SELECT id FROM projects WHERE name=?", (selected_project,), one=True)[0]
+                tasks = query_db("SELECT * FROM tasks WHERE project_id=?", (project_id,))
                 
-                # Create a bar chart
-                fig = px.bar(
-                    budget_variance_df,
-                    x="Project",
-                    y="Budget Variance",
-                    title="Budget Variance by Project",
-                    labels={"Project": "Project", "Budget Variance": "Budget Variance ($)"},
-                    color="Budget Variance",
-                    color_continuous_scale=px.colors.diverging.RdBu,  # Red for negative, Blue for positive
-                )
-                st.plotly_chart(fig)
-            else:
-                st.info("No budget data available for visualization.")
-
-        # Interactive Filters in Sidebar
-        st.sidebar.subheader("Filters")
-
-        # Filter by Project
-        projects = query_db("SELECT id, name FROM projects WHERE user_id=?", (st.session_state.user_id,))
-        project_names = [project[1] for project in projects]
-        selected_projects = st.sidebar.multiselect(
-            "Filter by Project",
-            options=project_names,
-            default=project_names
-        )
-
-        # Function to filter tasks by project
-        def filter_tasks_by_project(tasks, selected_projects):
-            filtered_tasks = []
-            for task in tasks:
-                project_name = query_db("SELECT name FROM projects WHERE id=?", (task[1],), one=True)[0]
-                if project_name in selected_projects:
-                    filtered_tasks.append(task)
-            return filtered_tasks
-
-        # Apply filters to tasks
-        tasks = get_tasks()
-        filtered_tasks = filter_tasks_by_project(tasks, selected_projects)
-
-        # Task Timeline by Project (Gantt Chart)
-        st.subheader("📅 Task Timeline by Project")
-        if filtered_tasks:
-            # Prepare data for the Gantt chart
-            gantt_data = []
-            for task in filtered_tasks:
-                start_date = datetime.strptime(task[11], "%Y-%m-%d").date() if task[11] else datetime.today().date()
-                deadline = datetime.strptime(task[6], "%Y-%m-%d").date()
-                gantt_data.append({
-                    "Task": task[2],  # Task title
-                    "Start": start_date,
-                    "Finish": deadline,
-                    "Status": task[4],  # Task status
-                    "Priority": task[8],  # Task priority
-                    "Project": query_db("SELECT name FROM projects WHERE id=?", (task[1],), one=True)[0]  # Project name
-                })
-            
-            # Create a DataFrame for the Gantt chart
-            gantt_df = pd.DataFrame(gantt_data)
-            
-            # Create the Gantt chart using Plotly
-            fig = px.timeline(
-                gantt_df,
-                x_start="Start",
-                x_end="Finish",
-                y="Task",
-                color="Status",
-                title="Task Timeline by Project",
-                labels={"Task": "Task", "Start": "Start Date", "Finish": "Deadline"},
-                hover_data=["Priority", "Project"]  # Show priority and project in tooltips
-            )
-            st.plotly_chart(fig)
-        else:
-            st.info("No tasks found for the selected projects.")
-
-        # Task Distribution by Assignee (Independent of Filters)
-        st.subheader("👤 Task Distribution by Assignee")
-        
-        # Fetch all tasks (ignoring filters)
-        all_tasks = get_tasks()
-        
-        if all_tasks:
-            # Fetch assignee names for each task
-            assignee_counts = {}
-            for task in all_tasks:
-                assignee_id = task[10]  # Assigned To field
-                if assignee_id:
-                    assignee = query_db("SELECT username FROM users WHERE id=?", (assignee_id,), one=True)
-                    if assignee:
-                        assignee_name = assignee[0]
-                        assignee_counts[assignee_name] = assignee_counts.get(assignee_name, 0) + 1
-            
-            if assignee_counts:
-                # Convert to DataFrame
-                assignee_df = pd.DataFrame(list(assignee_counts.items()), columns=["Assignee", "Number of Tasks"])
+                st.write(f"### Tasks for: {selected_project}")
                 
-                # Create a bar chart
-                fig = px.bar(
-                    assignee_df,
-                    x="Assignee",
-                    y="Number of Tasks",
-                    title="Task Distribution by Assignee",
-                    labels={"Assignee": "Assignee", "Number of Tasks": "Number of Tasks"}
-                )
-                st.plotly_chart(fig)
-            else:
-                st.info("No tasks assigned to team members.")
-        else:
-            st.info("No tasks found in the database.")
-
-        # Export Options
-        st.subheader("📤 Export Reports")
-        
-        # List of tables available for export
-        export_tables = [
-            "users", "projects", "tasks", "subtasks", 
-            "task_dependencies", "sqlite_sequence", "comments"
-        ]
-        
-        # Select table to export
-        selected_table = st.selectbox("Select Table to Export", export_tables)
-        
-        # Fetch data from the selected table
-        if st.button("Export Data"):
-            try:
-                # Fetch data from the selected table
-                query = f"SELECT * FROM {selected_table}"
-                data = query_db(query)
-                
-                if data:
-                    # Convert to DataFrame
-                    export_df = pd.DataFrame(data)
-                    
-                    # Export as CSV
-                    csv = export_df.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv,
-                        file_name=f"{selected_table}_report.csv",
-                        mime="text/csv",
-                    )
-                    
-                    # Export as Excel
-                    excel_buffer = io.BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                        export_df.to_excel(writer, index=False)
-                    excel_buffer.seek(0)
-                    st.download_button(
-                        label="Download Excel",
-                        data=excel_buffer,
-                        file_name=f"{selected_table}_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
+                if not tasks:
+                    st.warning("No tasks found for this project.")
                 else:
-                    st.warning(f"No data found in the {selected_table} table.")
-            except Exception as e:
-                st.error(f"An error occurred while exporting data: {e}")
+                    # Display tasks with inline editing and deletion
+                    for task in tasks:
+                        task_id = task[0]
+                        with st.container():
+                            # Task card styling
+                            is_overdue = (datetime.strptime(task[6], "%Y-%m-%d").date() < datetime.today().date() 
+                                        if task[6] else False) and task[4] != "Completed"
+                            
+                            card_style = """
+                                border: 1px solid #e0e0e0;
+                                border-radius: 8px;
+                                padding: 16px;
+                                margin: 10px 0;
+                                background: white;
+                                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                            """
+                            
+                            if is_overdue:
+                                card_style = """
+                                    border-left: 4px solid #ff4d4d;
+                                    border-radius: 8px;
+                                    padding: 16px;
+                                    margin: 10px 0;
+                                    background: #fff5f5;
+                                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                                """
+                            
+                            st.markdown(f"""
+                            <div style="{card_style}">
+                                <h3 style="margin-top:0;color:#2c3e50;">{task[2]}</h3>
+                                <p><strong>Status:</strong> {task[4]} {'⚠️ OVERDUE' if is_overdue else ''}</p>
+                                <p><strong>Priority:</strong> <span style="color:{priority_colors.get(task[8], '#000000')}">{task[8]}</span></p>
+                                <p><strong>Deadline:</strong> {task[6]}</p>
+                                <p><strong>Description:</strong></p>
+                                <div style="background:#f8f9fa; padding:10px; border-radius:4px; margin:5px 0;">
+                                    {task[3] or "No description provided"}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # Determine button visibility
+                            is_admin = st.session_state.user_role == "Admin"
+                            is_project_owner = query_db(
+                                "SELECT user_id FROM projects WHERE id=?", 
+                                (task[1],), one=True
+                            )[0] == st.session_state.user_id
+                            is_task_assignee = task[10] == st.session_state.user_id
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                # Show Edit button for admins, project owners, or task assignees
+                                if (is_admin or is_project_owner or is_task_assignee) and st.button("✏️ Edit", key=f"edit_{task_id}"):
+                                    st.session_state.editing_task_id = task_id
+                                    st.session_state.editing_task_project = task[1]  # project_id
+                                    st.rerun()
+                            
+                            with col2:
+                                # Show Delete button only for admins and project owners
+                                if (is_admin or is_project_owner) and st.button("🗑️ Delete", key=f"delete_{task_id}", type="primary"):
+                                    st.session_state.deleting_task_id = task_id
+                                    st.rerun()
+
+                            # Edit Task Form (shown immediately after the task card if editing)
+                            # Edit Task Form (shown immediately after the task card if editing)
+                            if 'editing_task_id' in st.session_state and st.session_state.editing_task_id == task_id:
+                                task_id = st.session_state.editing_task_id
+                                project_id = st.session_state.editing_task_project
+                                
+                                # # Check edit permissions
+                                # is_admin = st.session_state.user_role == "Admin"
+                                # is_project_owner = query_db(
+                                #     "SELECT user_id FROM projects WHERE id=?", 
+                                #     (project_id,), one=True
+                                # )[0] == st.session_state.user_id
+
+                                # New fixed code
+                                project_owner = query_db(
+                                    "SELECT user_id FROM projects WHERE id=?",
+                                    (project_id,), one=True
+                                )
+                                is_project_owner = (project_owner and project_owner[0] == st.session_state.user_id) or st.session_state.user_role == "Admin"
 
 
 
+                                is_task_assignee = task[10] == st.session_state.user_id
+                                
+                                if is_admin or is_project_owner or is_task_assignee:
+                                    # Use the new unified edit form
+                                    with st.expander(f"✏️ Editing Task: {task[2]}", expanded=True):
+                                        if edit_task_form(task_id, project_id):
+                                            # If save was successful, clear editing state
+                                            del st.session_state.editing_task_id
+                                            st.rerun()
+                                        elif st.button("Close Without Saving"):
+                                            del st.session_state.editing_task_id
+                                            st.rerun()
+
+
+                            # Delete Confirmation (shown immediately after the task card if deleting)
+                            if 'deleting_task_id' in st.session_state and st.session_state.deleting_task_id == task_id:
+                                task_id = st.session_state.deleting_task_id
+                                task = query_db("SELECT * FROM tasks WHERE id=?", (task_id,), one=True)
+                                
+                                if task:
+                                    # Check delete permissions
+                                    is_admin = st.session_state.user_role == "Admin"
+                                    is_project_owner = query_db(
+                                        "SELECT user_id FROM projects WHERE id=?", 
+                                        (task[1],), one=True
+                                    )[0] == st.session_state.user_id
+                                    
+                                    if is_admin or is_project_owner:
+                                        with st.container():
+                                            st.warning(f"⚠️ Are you sure you want to delete task: {task[2]}?")
+                                            st.error("This action cannot be undone and will delete all associated data!")
+                                            
+                                            col1, col2 = st.columns(2)
+                                            with col1:
+                                                if st.button("✅ Confirm Delete", key=f"confirm_delete_{task_id}", type="primary"):
+                                                    # Delete task dependencies first
+                                                    query_db("DELETE FROM task_dependencies WHERE task_id=? OR depends_on_task_id=?", (task_id, task_id))
+                                                    # Delete task comments
+                                                    query_db("DELETE FROM comments WHERE task_id=?", (task_id,))
+                                                    # Delete task subtasks
+                                                    query_db("DELETE FROM subtasks WHERE task_id=?", (task_id,))
+                                                    # Delete task attachments
+                                                    query_db("DELETE FROM attachments WHERE task_id=?", (task_id,))
+                                                    # Finally delete the task
+                                                    query_db("DELETE FROM tasks WHERE id=?", (task_id,))
+                                                    st.success("Task deleted successfully!")
+                                                    del st.session_state.deleting_task_id
+                                                    st.rerun()
+                                            with col2:
+                                                if st.button("❌ Cancel", key=f"cancel_delete_{task_id}"):
+                                                    del st.session_state.deleting_task_id
+                                                    st.rerun()
 
 
 
+        # ======= Section Divider =======
+        st.markdown("---")
+        st.header("📊 Task Analytics")
+
+        tasks_df = display_task_table()
+
+        # Simplified tabs without project filter
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Timeline", "Progress", "Priority Breakdown", "Budget Tracking", "Budget Variance", "Workload"])
+
+        
+        
+        with tab1:
+            plot_task_timeline(tasks_df)
+        
+        with tab2:
+            plot_task_progress_over_time(tasks_df)
+
+        with tab3:
+            plot_task_priority_distribution(tasks_df)
+
+        with tab4:
+            plot_budget_tracking(tasks_df)
+
+        with tab5:
+            plot_budget_variance(tasks_df)        
+
+        with tab6:
+            plot_assignee_workload(tasks_df)
+
+        
+
+
+
+    
     # Notifications Page
     elif page == "Notifications":
-        st.title("🔔 Notifications")
-
-        # Fetch overdue and upcoming tasks
-        overdue_tasks, upcoming_tasks = get_upcoming_and_overdue_tasks()
-
-        # Summary Statistics
-        st.subheader("📊 Summary")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Overdue Tasks", len(overdue_tasks))
-        with col2:
-            st.metric("Upcoming Tasks", len(upcoming_tasks))
-
-        # Filter Options in Sidebar
-        st.sidebar.subheader("Filters")
+        st.markdown("---")
         
-        # Filter by Priority
-        priority_filter = st.sidebar.multiselect(
-            "Filter by Priority",
-            options=["High", "Medium", "Low"],
-            default=["High", "Medium", "Low"]
-        )
-        
-        # Filter by Project
-        projects = query_db("SELECT id, name FROM projects WHERE user_id=?", (st.session_state.user_id,))
-        project_names = [project[1] for project in projects]
-        project_filter = st.sidebar.multiselect(
-            "Filter by Project",
-            options=project_names,
-            default=project_names
-        )
-        
-        # Filter by Deadline (for upcoming tasks)
-        # Ensure deadline_filter is always a tuple with two elements
-        deadline_filter = st.sidebar.date_input(
-            "Filter by Deadline",
-            value=[datetime.today(), datetime.today() + timedelta(days=7)],  # Default range: today to next 7 days
-            key="deadline_filter"
-        )
 
-        # Ensure deadline_filter has exactly two elements
-        if len(deadline_filter) != 2:
-            st.error("Please select a valid date range.")
-            st.stop()  # Stop execution if the date range is invalid
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+        </style>
+        """, unsafe_allow_html=True)
 
-        # Function to filter tasks
-        def filter_tasks(tasks, priority_filter, project_filter, deadline_filter):
-            filtered_tasks = []
+
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">🔔 Notifications Center</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)  
+        
+        # Initialize session state for viewing task details
+        if 'viewing_task_id' not in st.session_state:
+            st.session_state.viewing_task_id = None
+
+        # Custom CSS for notifications
+        st.markdown("""
+        <style>
+            .notification-card {
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 16px;
+                margin: 16px 0;
+                background: white;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            .overdue {
+                border-left: 4px solid #ff4d4d;
+                background: #fff5f5;
+            }
+            .upcoming {
+                border-left: 4px solid #ffa500;
+                background: #fffaf0;
+            }
+            .notification-header {
+                font-weight: bold;
+                font-size: 1.1rem;
+                margin-bottom: 8px;
+                color: #2c3e50;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Function to get tasks with proper project name handling
+        def get_upcoming_and_overdue_tasks():
+            today = datetime.today().date()
+            
+            if st.session_state.user_role == "Admin":
+                tasks = query_db("""
+                    SELECT t.*, p.name as project_name 
+                    FROM tasks t
+                    LEFT JOIN projects p ON t.project_id = p.id
+                    WHERE t.status != 'Completed'
+                """)
+            else:
+                tasks = query_db("""
+                    SELECT t.*, p.name as project_name 
+                    FROM tasks t
+                    LEFT JOIN projects p ON t.project_id = p.id
+                    WHERE t.status != 'Completed'
+                    AND (t.assigned_to = ? OR p.user_id = ?)
+                """, (st.session_state.user_id, st.session_state.user_id))
+            
+            overdue_tasks = []
+            upcoming_tasks = []
+
             for task in tasks:
-                priority = task[8] if len(task) > 8 else "Medium"  # Handle missing priority
-                project_name = query_db("SELECT name FROM projects WHERE id=?", (task[1],), one=True)[0]
-                deadline = datetime.strptime(task[6], "%Y-%m-%d").date()
+                deadline = datetime.strptime(task[6], "%Y-%m-%d").date() if task[6] else today
+                project_name = task[-1] if task[-1] else "Unassigned Project"
                 
-                # Apply filters
+                if deadline < today:
+                    overdue_tasks.append(task)
+                elif (deadline - today).days <= st.session_state.reminder_period:
+                    upcoming_tasks.append(task)
+
+            return upcoming_tasks, overdue_tasks
+
+        upcoming_tasks, overdue_tasks = get_upcoming_and_overdue_tasks()
+
+        # Display task details if a task is selected
+        if st.session_state.viewing_task_id:
+            task_id = st.session_state.viewing_task_id
+            task = query_db("""
+                SELECT t.*, p.name as project_name, u.username as assignee_name
+                FROM tasks t
+                LEFT JOIN projects p ON t.project_id = p.id
+                LEFT JOIN users u ON t.assigned_to = u.id
+                WHERE t.id = ?
+            """, (task_id,), one=True)
+            
+            if task:
+                with st.expander(f"📝 Task Details: {task[2]}", expanded=True):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Project:** {task[-2] if task[-2] else 'No project'}")
+                        st.write(f"**Title:** {task[2]}")
+                        st.write(f"**Status:** {task[4]}")
+                    with col2:
+                        st.write(f"**Assignee:** {task[-1] if task[-1] else 'Unassigned'}")
+                        st.write(f"**Start Date:** {task[11] if task[11] else 'Not set'}")
+                        st.write(f"**Deadline:** {task[6]}")
+                    
+                    st.divider()
+                    st.write("**Description:**")
+                    st.write(task[3] or "No description available")
+                    
+                    st.divider()
+                    st.write(f"**Time Spent:** {task[7]} hours")
+                    
+                    if st.button("Close Details"):
+                        st.session_state.viewing_task_id = None
+                        st.rerun()
+            else:
+                st.warning("Task not found")
+                st.session_state.viewing_task_id = None
+                st.rerun()
+
+        # Summary Cards
+        st.subheader("📊 Notification Summary")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="notification-card" style="background-color: #F5F5F5;">
+                <div style="font-size: 0.9rem; color: #666;">Total Notifications</div>
+                <div style="font-size: 1.8rem; font-weight: 700;">{len(overdue_tasks) + len(upcoming_tasks)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="notification-card" style="background-color: #FFF5F5;">
+                <div style="font-size: 0.9rem; color: #666;">Overdue Tasks</div>
+                <div style="font-size: 1.8rem; font-weight: 700; color: #D32F2F;">{len(overdue_tasks)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class="notification-card" style="background-color: #FFF9E6;">
+                <div style="font-size: 0.9rem; color: #666;">Upcoming Deadlines</div>
+                <div style="font-size: 1.8rem; font-weight: 700; color: #FF8F00;">{len(upcoming_tasks)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Filters Section
+        st.markdown("---")
+        st.subheader("🔍 Filter Notifications")
+        
+        with st.expander("Filter Options", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                priority_filter = st.multiselect(
+                    "Priority Level",
+                    options=["High", "Medium", "Low"],
+                    default=["High", "Medium", "Low"],
+                    key="priority_filter"
+                )
+            
+            with col2:
+                # Handle None project names safely
+                project_options = sorted(list(set(
+                    [task[-1] if task[-1] else "Unassigned Project" for task in overdue_tasks + upcoming_tasks]
+                )))
+                project_filter = st.multiselect(
+                    "Project",
+                    options=project_options,
+                    default=project_options,
+                    key="project_filter"
+                )
+            
+            with col3:
+                min_date = datetime.today().date()
+                max_date = min_date + timedelta(days=st.session_state.reminder_period)
+                deadline_filter = st.date_input(
+                    "Deadline Range",
+                    value=[min_date, max_date],
+                    key="deadline_filter"
+                )
+
+        # Apply filters
+        def apply_filters(task_list):
+            filtered = []
+            for task in task_list:
+                priority = task[8] if len(task) > 8 else "Medium"
+                project_name = task[-1] if task[-1] else "Unassigned Project"
+                deadline = datetime.strptime(task[6], "%Y-%m-%d").date() if task[6] else datetime.today().date()
+                
                 if (priority in priority_filter and
                     project_name in project_filter and
-                    (deadline >= deadline_filter[0] and deadline <= deadline_filter[1])):
-                    filtered_tasks.append(task)
-            return filtered_tasks
+                    (len(deadline_filter) == 2 and deadline_filter[0] <= deadline <= deadline_filter[1])):
+                    filtered.append(task)
+            return filtered
 
-        # Apply filters to overdue and upcoming tasks
-        filtered_overdue_tasks = filter_tasks(overdue_tasks, priority_filter, project_filter, deadline_filter)
-        filtered_upcoming_tasks = filter_tasks(upcoming_tasks, priority_filter, project_filter, deadline_filter)
+        filtered_overdue = apply_filters(overdue_tasks)
+        filtered_upcoming = apply_filters(upcoming_tasks)
 
-        # Collapsible Section for Overdue Tasks
-        with st.expander("⚠️ Overdue Tasks", expanded=True):
-            if filtered_overdue_tasks:
-                for task in filtered_overdue_tasks:
-                    priority = task[8] if len(task) > 8 else "Medium"
-                    color = priority_colors.get(priority, "#000000")
+        # Notifications Display
+        st.markdown("---")
+        st.subheader("📨 Your Notifications")
+
+        # Overdue Tasks Section
+        with st.expander(f"⚠️ Overdue Tasks ({len(filtered_overdue)})", expanded=True):
+            if filtered_overdue:
+                for task in filtered_overdue:
                     with st.container():
+                        deadline = datetime.strptime(task[6], "%Y-%m-%d").date() if task[6] else "No deadline"
+                        days_overdue = (datetime.today().date() - deadline).days if task[6] else 0
+                        project_name = task[-1] if task[-1] else "Unassigned Project"
+                        
                         st.markdown(f"""
-                            <div class="card" style="border: 2px solid {color}; border-radius: 8px; padding: 16px; margin: 10px;">
-                                <div class="card-title" style="color: {color}; font-size: 1.25rem; font-weight: bold;">
-                                    {task[2]} (Priority: {priority})
-                                </div>
-                                <div class="card-content" style="color: {st.session_state.color_scheme['text']};">
-                                    <p><strong>Deadline:</strong> {task[6]}</p>
-                                    <p><strong>Project:</strong> {query_db("SELECT name FROM projects WHERE id=?", (task[1],), one=True)[0]}</p>
-                                </div>
-                                <div class="card-footer">
-                                    <button onclick="markAsDone({task[0]})">Mark as Done</button>
-                                    <button onclick="snoozeTask({task[0]})">Snooze for 1 Day</button>
-                                </div>
+                        <div class="notification-card overdue">
+                            <div class="notification-header">
+                                {task[2]}
                             </div>
+                            <div style="margin-bottom: 8px;">
+                                <strong>Project:</strong> {project_name} | 
+                                <strong>Deadline:</strong> {deadline} ({days_overdue} days overdue)
+                            </div>
+                            <div style="margin-bottom: 8px;">{task[3] or "No description"}</div>
+                        </div>
                         """, unsafe_allow_html=True)
+                        
+                        # Use Streamlit button instead of HTML button
+                        if st.button("View Details", key=f"view_{task[0]}"):
+                            st.session_state.viewing_task_id = task[0]
+                            st.rerun()
             else:
-                st.info("No overdue tasks matching the filters.")
+                st.info("No overdue tasks matching your filters.")
 
-        # Collapsible Section for Upcoming Tasks
-        with st.expander("🔜 Upcoming Tasks", expanded=True):
-            if filtered_upcoming_tasks:
-                for task in filtered_upcoming_tasks:
-                    priority = task[8] if len(task) > 8 else "Medium"
-                    color = priority_colors.get(priority, "#000000")
+        # Upcoming Tasks Section
+        with st.expander(f"🔜 Upcoming Deadlines ({len(filtered_upcoming)})", expanded=True):
+            if filtered_upcoming:
+                for task in filtered_upcoming:
                     with st.container():
+                        deadline = datetime.strptime(task[6], "%Y-%m-%d").date() if task[6] else "No deadline"
+                        days_remaining = (deadline - datetime.today().date()).days if task[6] else 0
+                        project_name = task[-1] if task[-1] else "Unassigned Project"
+                        
                         st.markdown(f"""
-                            <div class="card" style="border: 2px solid {color}; border-radius: 8px; padding: 16px; margin: 10px;">
-                                <div class="card-title" style="color: {color}; font-size: 1.25rem; font-weight: bold;">
-                                    {task[2]} (Priority: {priority})
-                                </div>
-                                <div class="card-content" style="color: {st.session_state.color_scheme['text']};">
-                                    <p><strong>Deadline:</strong> {task[6]}</p>
-                                    <p><strong>Project:</strong> {query_db("SELECT name FROM projects WHERE id=?", (task[1],), one=True)[0]}</p>
-                                </div>
-                                <div class="card-footer">
-                                    <button onclick="markAsDone({task[0]})">Mark as Done</button>
-                                    <button onclick="snoozeTask({task[0]})">Snooze for 1 Day</button>
-                                </div>
+                        <div class="notification-card upcoming">
+                            <div class="notification-header">
+                                {task[2]}
                             </div>
+                            <div style="margin-bottom: 8px;">
+                                <strong>Project:</strong> {project_name} | 
+                                <strong>Deadline:</strong> {deadline} (in {days_remaining} days)
+                            </div>
+                            <div style="margin-bottom: 8px;">{task[3] or "No description"}</div>
+                        </div>
                         """, unsafe_allow_html=True)
+                        
+                        if st.button("View Details", key=f"view_{task[0]}_upcoming"):
+                            st.session_state.viewing_task_id = task[0]
+                            st.rerun()
             else:
-                st.info("No upcoming tasks matching the filters.")
+                st.info("No upcoming tasks matching your filters.")
+
+        # JavaScript to handle button clicks
+        components.html("""
+        <script>
+            window.addEventListener('message', function(event) {
+                if (event.data.taskId) {
+                    // This will trigger Streamlit to update the viewing_task state
+                    window.parent.postMessage({
+                        streamlit: {
+                            type: 'streamlit:componentMessage',
+                            data: {taskId: event.data.taskId}
+                        }
+                    }, '*');
+                }
+            });
+        </script>
+        """, height=0)
 
 
 
-
-
+    
     # Calendar Page
     elif page == "Calendar":
-        st.title("📅 Calendar")
+        st.markdown("---")
 
-        # Define status colors for tasks
-        status_colors = {
-            "Pending": "#FFA500",  # Orange
-            "In Progress": "#00BFFF",  # DeepSkyBlue
-            "Completed": "#32CD32",  # LimeGreen
-            "Overdue": "#FF4500"  # OrangeRed
-        }
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+        </style>
+        """, unsafe_allow_html=True)
 
-        def fetch_all_visible_tasks():
-            """Fetch tasks visible to current user (admin sees all, others see assigned/owned tasks)"""
-            if st.session_state.user_role == "Admin":
-                query = """
-                    SELECT t.id, t.title, t.deadline, t.status, p.name AS project_name,
-                        u.username AS assignee_name, t.assigned_to
-                    FROM tasks t
-                    JOIN projects p ON t.project_id = p.id
-                    LEFT JOIN users u ON t.assigned_to = u.id
-                """
-                tasks = query_db(query)
-            else:
-                query = """
-                    SELECT t.id, t.title, t.deadline, t.status, p.name AS project_name,
-                        u.username AS assignee_name, t.assigned_to
-                    FROM tasks t
-                    JOIN projects p ON t.project_id = p.id
-                    LEFT JOIN users u ON t.assigned_to = u.id
-                    WHERE t.assigned_to = ? OR p.user_id = ?
-                """
-                tasks = query_db(query, (st.session_state.user_id, st.session_state.user_id))
-            return tasks
 
-        # Fetch all tasks visible to current user
-        all_tasks = fetch_all_visible_tasks()
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">📅 Project Calendar</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+        </div>
+        """, unsafe_allow_html=True)
 
-        # Prepare filter options
-        all_projects = list(set(task[4] for task in all_tasks))  # Unique project names
-        all_assignees = list(set(task[5] if task[5] else "Unassigned" for task in all_tasks))  # Unique assignees
+        st.markdown("---")
 
-        # Create filters
-        with st.expander("Filters", expanded=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                selected_projects = st.multiselect(
-                    "Filter by Project",
-                    options=sorted(all_projects),
-                    default=sorted(all_projects)
-                )
-            with col2:
-                selected_assignees = st.multiselect(
-                    "Filter by Assignee",
-                    options=sorted(all_assignees),
-                    default=sorted(all_assignees)
-                )
+        show_calendar_page()
 
-        # Filter tasks based on selections
-        filtered_tasks = [
-            task for task in all_tasks
-            if (task[4] in selected_projects) and 
-            ((task[5] if task[5] else "Unassigned") in selected_assignees)
+
+
+   
+   
+    # Admin Page
+    elif page == "Admin":
+        st.markdown("---")
+        
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+        </style>
+        """, unsafe_allow_html=True)
+
+
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">👤 Admin Dashboard</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+
+        
+        # Initialize the database to ensure schema is up-to-date
+        init_db()
+        
+        # ======= Quick Overview Section =======
+        st.markdown("---")
+        st.subheader("📊 User Overview")
+        
+
+        # Calculate metrics
+        total_users = query_db("SELECT COUNT(*) FROM users")[0][0]
+        active_users = query_db("""SELECT COUNT(*) FROM users 
+                                WHERE last_login IS NOT NULL 
+                                AND last_login != 'Never'
+                                AND datetime(last_login) > datetime('now', '-7 days')""")[0][0]
+        inactive_users = total_users - active_users
+        admins = query_db("SELECT COUNT(*) FROM users WHERE role='Admin'")[0][0]
+        
+        # Create metric cards with the same style as Dashboard
+        metric_cards = [
+            {"title": "Total Users", "value": total_users, "color": "#4E8BF5", "icon": "👥"},
+            {"title": "Active Users", "value": active_users, "color": "#6BB9F0", "icon": "👥"},
+            {"title": "Inactive Users", "value": inactive_users, "color": "#32CD32", "icon": "👥"},
+            {"title": "Admins", "value": admins, "color": "#FF4500", "icon": "👥"}
         ]
 
-        # Prepare calendar events
-        events = []
-        for task in filtered_tasks:
-            events.append({
-                "title": f"{task[1]}",
-                "start": task[2],
-                "color": status_colors.get(task[3], "#f0f0f0"),
-                "extendedProps": {
-                    "status": task[3],
-                    "project": task[4],
-                    "assignee": task[5] if task[5] else "Unassigned",
-                    "task_id": task[0]
-                }
-            })
+        # Display metrics in columns with consistent styling
+        cols = st.columns(4)
+        for i, card in enumerate(metric_cards):
+            with cols[i]:
+                st.markdown(f"""
+                <div style='
+                    background-color: #FFFFFF;
+                    border-radius: 10px;
+                    padding: 1.2rem;
+                    border-left: 4px solid {card['color']};
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    height: 100%;
+                '>
+                    <div style='display: flex; align-items: center; margin-bottom: 8px;'>
+                        <span style='font-size: 1.5rem; margin-right: 8px;'>{card['icon']}</span>
+                        <span style='font-size: 0.9rem; color: #666;'>{card['title']}</span>
+                    </div>
+                    <p style='font-size: 1.8rem; font-weight: 700; color: #2c3e50; margin: 0;'>{card['value']}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-        # Calendar configuration
-        calendar_options = {
-            "headerToolbar": {
-                "left": "today prev,next",
-                "center": "title",
-                "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"
-            },
-            "initialView": "dayGridMonth",
-            "editable": st.session_state.user_role == "Admin",
-            "selectable": True,
-            "events": events,
-            "eventClick": True,
-            "dateClick": True,
-            "eventDrop": st.session_state.user_role == "Admin"
-        }
 
-        # Display the calendar
-        calendar_result = calendar(events=events, options=calendar_options)
 
-        # Handle calendar interactions
-        if calendar_result:
-            if "eventClick" in calendar_result:
-                event = calendar_result["eventClick"]["event"]
-                with st.expander(f"Task Details: {event['title']}", expanded=True):
-                    st.write(f"**Project:** {event['extendedProps']['project']}")
-                    st.write(f"**Assignee:** {event['extendedProps']['assignee']}")
-                    st.write(f"**Status:** {event['extendedProps']['status']}")
-                    st.write(f"**Deadline:** {event['start']}")
-
-            elif "dateClick" in calendar_result:
-                selected_date = calendar_result["dateClick"]["date"]
-                st.subheader(f"Tasks due on {selected_date}")
-                tasks_on_date = [e for e in events if e["start"] == selected_date]
-                
-                if tasks_on_date:
-                    for task in tasks_on_date:
-                        st.write(f"- **{task['title']}** ({task['extendedProps']['project']})")
+        
+        # ======= User Activity Functions =======
+        def get_activity_status(last_login):
+            if not last_login or last_login == 'Never':
+                return "Inactive"
+            try:
+                last_login_dt = datetime.strptime(last_login, "%Y-%m-%d %H:%M:%S")
+                delta = datetime.now() - last_login_dt
+                if delta.days == 0:
+                    if delta.seconds < 300:  # 5 minutes
+                        return "Active now"
+                    return "Active today"
+                elif delta.days == 1:
+                    return "Yesterday"
+                elif delta.days < 7:
+                    return "This week"
                 else:
-                    st.info("No tasks due on this date")
+                    return "Inactive"
+            except:
+                return "Inactive"
 
-            elif "eventDrop" in calendar_result and st.session_state.user_role == "Admin":
-                event = calendar_result["eventDrop"]["event"]
-                new_deadline = event["start"]
-                task_id = event["extendedProps"]["task_id"]
-                
-                if st.button(f"Confirm reschedule to {new_deadline}"):
-                    query_db("UPDATE tasks SET deadline=? WHERE id=?", (new_deadline, task_id))
-                    st.success("Task deadline updated!")
-                    st.rerun()
+        # ======= Fetch User Data =======
+        try:
+            users = query_db("""
+                SELECT id, username, role, email, phone, first_name, last_name, 
+                    company, job_title, department, 
+                    CASE WHEN last_login IS NULL THEN 'Never' ELSE last_login END as last_login, 
+                    COALESCE(login_count, 0) as login_count, 
+                    COALESCE(is_active, 1) as is_active
+                FROM users
+                ORDER BY username
+            """)
+        except sqlite3.OperationalError as e:
+            st.error("Database schema needs update. Attempting to fix...")
+            init_db()
+            users = query_db("""
+                SELECT id, username, role, email, phone, first_name, last_name, 
+                    company, job_title, department, 
+                    CASE WHEN last_login IS NULL THEN 'Never' ELSE last_login END as last_login, 
+                    COALESCE(login_count, 0) as login_count, 
+                    COALESCE(is_active, 1) as is_active
+                FROM users
+                ORDER BY username
+            """)
 
-        # Export functionality
-        st.sidebar.subheader("Export Options")
-        if st.sidebar.button("Export Visible Tasks"):
-            ical_content = "BEGIN:VCALENDAR\nVERSION:2.0\n"
-            for event in events:
-                ical_content += f"""
-    BEGIN:VEVENT
-    SUMMARY:{event['title']}
-    DESCRIPTION:Project: {event['extendedProps']['project']}, Assignee: {event['extendedProps']['assignee']}
-    DTSTART:{event['start'].replace('-', '')}
-    DTEND:{event['start'].replace('-', '')}
-    END:VEVENT
-    """
-            ical_content += "END:VCALENDAR"
+        if users:
+            # Convert to DataFrame
+            users_df = pd.DataFrame(users, columns=[
+                "ID", "Username", "Role", "Email", "Phone", "First Name", "Last Name",
+                "Company", "Job Title", "Department", "Last Login", "Login Count", "Is Active"
+            ])
             
-            st.sidebar.download_button(
-                label="Download iCal",
-                data=ical_content,
-                file_name="tasks_calendar.ics",
-                mime="text/calendar"
+            # Add activity status column
+            users_df["Activity"] = users_df["Last Login"].apply(get_activity_status)
+            
+            
+            # Display user table
+            st.markdown("---")
+            st.subheader("👥 User Activity")
+
+            # Add filters
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                role_filter = st.multiselect(
+                    "Filter by Role",
+                    options=users_df["Role"].unique(),
+                    default=users_df["Role"].unique()
+                )
+            with col2:
+                activity_filter = st.multiselect(
+                    "Filter by Activity",
+                    options=["Active now", "Active today", "Yesterday", "This week", "Inactive"],
+                    default=["Active now", "Active today", "Yesterday", "This week", "Inactive"]
+                )
+            with col3:
+                status_filter = st.multiselect(
+                    "Filter by Status",
+                    options=["Active", "Inactive"],
+                    default=["Active", "Inactive"]
+                )
+
+            # Apply filters
+            filtered_users = users_df[
+                (users_df["Role"].isin(role_filter)) &
+                (users_df["Activity"].isin(activity_filter)) &
+                (users_df["Is Active"].isin([1 if s == "Active" else 0 for s in status_filter]))
+            ]
+
+            
+            
+            # When displaying the user table:
+            st.dataframe(
+                users_df,
+                column_config={
+                    "Last Login": st.column_config.DatetimeColumn(
+                        "Last Active",
+                        format="YYYY-MM-DD HH:mm",
+                    )
+                }
             )
 
 
+        # Consider adding a refresh button to reload user data:
+
+        if st.button("🔄 Refresh Data"):
+            st.rerun()
+
+        # Add export functionality for the user data:
+        with st.expander("📤 Export User Logging Data"):
+            csv = users_df.to_csv(index=False)
+            st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="user_logging_data.csv",
+            mime="text/csv"
+        )
+
+        
+        # ======= Summary Statistics ======= 
+        st.markdown("---")
+        st.subheader("📊 Project Overview")
+        
+
+        # Calculate metrics
+        total_users = len(query_db("SELECT * FROM users"))
+        total_projects = len(query_db("SELECT * FROM projects"))
+        active_projects = len(query_db("SELECT * FROM projects WHERE end_date >= ?", (datetime.today().date(),)))
+        overdue_projects = len(query_db("""
+            SELECT p.id 
+            FROM projects p
+            WHERE p.end_date < ? 
+            AND EXISTS (
+                SELECT 1 FROM tasks t 
+                WHERE t.project_id = p.id 
+                AND t.status != 'Completed'
+            )
+        """, (datetime.today().date(),)))
+        completed_projects = len(query_db("""
+            SELECT p.id 
+            FROM projects p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM tasks t 
+                WHERE t.project_id = p.id 
+                AND t.status != 'Completed'
+            )
+        """))
+        
+        # Create metric cards with the same style as Dashboard
+        metric_cards = [
+            {"title": "Completed Projects", "value": completed_projects, "color": "#07f7f7", "icon": "✅"},
+            {"title": "Total Projects", "value": total_projects, "color": "#6BB9F0", "icon": "📂"},
+            {"title": "Active Projects", "value": active_projects, "color": "#32CD32", "icon": "🟢"},
+            {"title": "Overdue Projects", "value": overdue_projects, "color": "#FF4500", "icon": "⚠️"}
+        ]
+
+        # Display metrics in columns with consistent styling
+        cols = st.columns(4)
+        for i, card in enumerate(metric_cards):
+            with cols[i]:
+                st.markdown(f"""
+                <div style='
+                    background-color: #FFFFFF;
+                    border-radius: 10px;
+                    padding: 1.2rem;
+                    border-left: 4px solid {card['color']};
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    height: 100%;
+                '>
+                    <div style='display: flex; align-items: center; margin-bottom: 8px;'>
+                        <span style='font-size: 1.5rem; margin-right: 8px;'>{card['icon']}</span>
+                        <span style='font-size: 0.9rem; color: #666;'>{card['title']}</span>
+                    </div>
+                    <p style='font-size: 1.8rem; font-weight: 700; color: #2c3e50; margin: 0;'>{card['value']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+        
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
 
-    # Admin Page
-    elif page == "Admin":
-        st.title("👤 Admin Dashboard")
-
-        # Summary Statistics
-        st.subheader("📊 Summary")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            total_users = len(query_db("SELECT * FROM users"))
-            st.metric("Total Users", total_users)
-        with col2:
-            total_projects = len(query_db("SELECT * FROM projects"))
-            st.metric("Total Projects", total_projects)
-        with col3:
-            active_projects = len(query_db("SELECT * FROM projects WHERE end_date >= ?", (datetime.today().date(),)))
-            st.metric("Active Projects", active_projects)
-
-        # User Management Section
+        # ======= User Management Section ======= 
         st.subheader("👥 User Management")
 
         # Add New User Form
         with st.expander("➕ Add New User", expanded=False):
             with st.form("add_user_form"):
-                new_username = st.text_input("Username")
-                new_password = st.text_input("Password", type="password")
-                new_role = st.selectbox("Role", ["User", "Admin"])
-                new_email = st.text_input("Email")
-                new_phone = st.text_input("Phone")
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_username = st.text_input("Username*")
+                    new_first_name = st.text_input("First Name")
+                    new_last_name = st.text_input("Last Name")
+                    new_company = st.text_input("Company")
+                with col2:
+                    new_role = st.selectbox("Role*", ["User", "Admin"])
+                    new_job_title = st.text_input("Job Title")
+                    new_department = st.text_input("Department")
+                    new_email = st.text_input("Email")
+                    new_phone = st.text_input("Phone")
+                
+                new_password = st.text_input("Password*", type="password")
 
                 if st.form_submit_button("Add User"):
-                    if query_db("SELECT * FROM users WHERE username=?", (new_username,), one=True):
+                    if not new_username or not new_password:
+                        st.error("Username and password are required fields")
+                    elif query_db("SELECT * FROM users WHERE username=?", (new_username,), one=True):
                         st.error("Username already exists.")
                     else:
                         query_db("""
-                            INSERT INTO users (username, password, role, email, phone)
-                            VALUES (?, ?, ?, ?, ?)
+                            INSERT INTO users (username, password, role, email, phone, 
+                                            first_name, last_name, company, job_title, department)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             new_username,
                             hash_password(new_password),
                             new_role,
                             new_email,
-                            new_phone
+                            new_phone,
+                            new_first_name,
+                            new_last_name,
+                            new_company,
+                            new_job_title,
+                            new_department
                         ))
                         st.success("User added successfully!")
                         st.rerun()
 
-        # Display Users in a Table
-        st.write("### User List")
-        users = query_db("SELECT id, username, role, email, phone FROM users")
-        if users:
-            user_df = pd.DataFrame(users, columns=["ID", "Username", "Role", "Email", "Phone"])
-            st.dataframe(user_df, use_container_width=True)
+            
+        
+        # ======= Filtered User Table =======
+        # Fetch all users
+        users = query_db("SELECT id, username, role, email, phone, first_name, last_name, company, job_title, department FROM users")
+
+        if not users:
+            st.info("No users found in the database.")
         else:
-            st.info("No users found.")
+            # Convert to DataFrame
+            users_df = pd.DataFrame(users, columns=["ID", "Username", "Role", "Email", "Phone", "First Name", "Last Name", "Company", "Job Title", "Department"])
+            
+            # Create filter widgets - matching project analytics style
+            with st.expander("🔍 Filter Users", expanded=False):
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    username_options = ['All Usernames'] + sorted(users_df['Username'].unique().tolist())
+                    selected_username = st.selectbox(
+                        "Filter by Username", 
+                        username_options,
+                        key="user_username_filter"
+                    )
+                
+                with col2:
+                    role_options = ['All Roles'] + sorted(users_df['Role'].unique().tolist())
+                    selected_role = st.selectbox(
+                        "Filter by Role",
+                        role_options,
+                        key="user_role_filter"
+                    )
+                    
+                with col3:
+                    first_name_options = ['All First Names'] + sorted(users_df['First Name'].dropna().unique().tolist())
+                    selected_first_name = st.selectbox(
+                        "Filter by First Name",
+                        first_name_options,
+                        key="user_first_name_filter"
+                    )
+                    
+                with col4:
+                    last_name_options = ['All Last Names'] + sorted(users_df['Last Name'].dropna().unique().tolist())
+                    selected_last_name = st.selectbox(
+                        "Filter by Last Name",
+                        last_name_options,
+                        key="user_last_name_filter"
+                    )
 
-        # Edit and Delete Users
-        st.write("### Edit or Delete Users")
-        for user in users:
-            with st.expander(f"Edit User: {user[1]}", expanded=False):
-                with st.form(f"edit_user_{user[0]}"):
-                    new_username = st.text_input("Username", value=user[1])
-                    new_password = st.text_input("Password", type="password", placeholder="Leave blank to keep current password")
-                    new_role = st.selectbox("Role", ["User", "Admin"], index=["User", "Admin"].index(user[2]))
-                    new_email = st.text_input("Email", value=user[3])
-                    new_phone = st.text_input("Phone", value=user[4])
+            # Apply filters
+            filtered_df = users_df.copy()
+            
+            if selected_username != 'All Usernames':
+                filtered_df = filtered_df[filtered_df['Username'] == selected_username]
+            
+            if selected_role != 'All Roles':
+                filtered_df = filtered_df[filtered_df['Role'] == selected_role]
+                
+            if selected_first_name != 'All First Names':
+                filtered_df = filtered_df[filtered_df['First Name'] == selected_first_name]
+                
+            if selected_last_name != 'All Last Names':
+                filtered_df = filtered_df[filtered_df['Last Name'] == selected_last_name]
 
-                    if st.form_submit_button("Update User"):
-                        if new_password:
-                            query_db("""
-                                UPDATE users
-                                SET username=?, password=?, role=?, email=?, phone=?
-                                WHERE id=?
-                            """, (
-                                new_username,
-                                hash_password(new_password),
-                                new_role,
-                                new_email,
-                                new_phone,
-                                user[0]
-                            ))
-                        else:
-                            query_db("""
-                                UPDATE users
-                                SET username=?, role=?, email=?, phone=?
-                                WHERE id=?
-                            """, (
-                                new_username,
-                                new_role,
-                                new_email,
-                                new_phone,
-                                user[0]
-                            ))
-                        st.success("User updated successfully!")
+            # Add selection column to filtered DataFrame
+            filtered_df.insert(0, "Select", False)
+            
+            # Display editable dataframe with checkboxes
+            edited_df = st.data_editor(
+                filtered_df,
+                column_config={
+                    "Select": st.column_config.CheckboxColumn("Select"),
+                    "ID": None,  # Hide ID column
+                    "Role": st.column_config.SelectboxColumn(
+                        "Role",
+                        options=["Admin", "User"],
+                        required=True
+                    )
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="user_editor"
+            )
+            
+            # Get selected rows from the filtered DataFrame
+            selected_users = edited_df[edited_df["Select"]]
+            
+            # Action buttons for selected users
+            if not selected_users.empty:
+                st.markdown("---")
+                st.subheader("Selected User Actions")
+                
+                col1, col2, col3 = st.columns([1,1,3])
+                
+                with col1:
+                    if st.button("✏️ Edit Selected", key="edit_selected"):
+                        st.session_state.editing_users = selected_users["ID"].tolist()
                         st.rerun()
-
-                if st.button(f"Delete User {user[1]}"):
-                    if user[0] == st.session_state.user_id:
-                        st.error("You cannot delete your own account.")
-                    else:
-                        query_db("DELETE FROM users WHERE id=?", (user[0],))
-                        st.success("User deleted successfully!")
+                
+                with col2:
+                    if st.button("🗑️ Delete Selected", type="primary", key="delete_selected"):
+                        st.session_state.deleting_users = selected_users["ID"].tolist()
                         st.rerun()
+            
+            # Delete confirmation
+            if 'deleting_users' in st.session_state and st.session_state.deleting_users:
+                st.markdown("---")
+                st.subheader("Confirm Deletion")
+                
+                users_to_delete = []
+                for user_id in st.session_state.deleting_users:
+                    user = query_db("SELECT username FROM users WHERE id=?", (user_id,), one=True)
+                    if user:
+                        users_to_delete.append(user[0])
+                
+                st.warning(f"⚠️ You are about to delete {len(users_to_delete)} user(s):")
+                st.write(", ".join(users_to_delete))
+                st.error("This action cannot be undone! All associated data will be permanently deleted.")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Confirm Deletion", type="primary"):
+                        for user_id in st.session_state.deleting_users:
+                            try:
+                                query_db("DELETE FROM users WHERE id=?", (user_id,))
+                            except Exception as e:
+                                st.error(f"Error deleting user ID {user_id}: {str(e)}")
+                        st.success(f"Successfully deleted {len(users_to_delete)} user(s)")
+                        del st.session_state.deleting_users
+                        st.rerun()
+                
+                with col2:
+                    if st.button("❌ Cancel"):
+                        del st.session_state.deleting_users
+                        st.rerun()
+           
 
-        # Project Management Section
+            # Add this section to handle editing selected users
+            if 'editing_users' in st.session_state and st.session_state.editing_users:
+                st.markdown("---")
+                st.subheader("✏️ Edit Selected Users")
+                
+                # Get the selected users' data
+                selected_users_data = []
+                for user_id in st.session_state.editing_users:
+                    user = query_db(
+                        "SELECT id, username, role, email, phone, first_name, last_name, company, job_title, department FROM users WHERE id=?",
+                        (user_id,), one=True
+                    )
+                    if user:
+                        selected_users_data.append(user)
+                
+                if selected_users_data:
+                    # Create a form for editing
+                    with st.form("edit_users_form"):
+                        edited_users = []
+                        
+                        for user in selected_users_data:
+                            user_id, username, role, email, phone, first_name, last_name, company, job_title, department = user
+                            
+                            st.markdown(f"### Editing User: {username}")
+                            
+                            cols = st.columns(2)
+                            with cols[0]:
+                                new_first_name = st.text_input("First Name", value=first_name, key=f"first_name_{user_id}")
+                                new_last_name = st.text_input("Last Name", value=last_name, key=f"last_name_{user_id}")
+                                new_company = st.text_input("Company", value=company, key=f"company_{user_id}")
+                            with cols[1]:
+                                new_role = st.selectbox(
+                                    "Role", 
+                                    ["User", "Admin"],
+                                    index=0 if role == "User" else 1,
+                                    key=f"role_{user_id}"
+                                )
+                                new_job_title = st.text_input("Job Title", value=job_title, key=f"job_title_{user_id}")
+                                new_department = st.text_input("Department", value=department, key=f"department_{user_id}")
+                            
+                            new_email = st.text_input("Email", value=email, key=f"email_{user_id}")
+                            new_phone = st.text_input("Phone", value=phone, key=f"phone_{user_id}")
+                            
+                            edited_users.append({
+                                "id": user_id,
+                                "first_name": new_first_name,
+                                "last_name": new_last_name,
+                                "company": new_company,
+                                "role": new_role,
+                                "job_title": new_job_title,
+                                "department": new_department,
+                                "email": new_email,
+                                "phone": new_phone
+                            })
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("💾 Save Changes"):
+                                try:
+                                    for user in edited_users:
+                                        query_db("""
+                                            UPDATE users SET
+                                                first_name=?, last_name=?, company=?,
+                                                role=?, job_title=?, department=?,
+                                                email=?, phone=?
+                                            WHERE id=?
+                                        """, (
+                                            user["first_name"], user["last_name"], user["company"],
+                                            user["role"], user["job_title"], user["department"],
+                                            user["email"], user["phone"],
+                                            user["id"]
+                                        ))
+                                    st.success("User updates saved successfully!")
+                                    del st.session_state.editing_users
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error updating users: {str(e)}")
+                        
+                        with col2:
+                            if st.form_submit_button("❌ Cancel"):
+                                del st.session_state.editing_users
+                                st.rerun()
+       
+
+       # Add export functionality for the user data:
+        with st.expander("📤 Export User Data"):
+            csv = users_df.to_csv(index=False)
+            st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="user_data.csv",
+            mime="text/csv"
+        )
+
+
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+
+        # ======= Project Management Section =======
         st.subheader("📂 Project Management")
 
-        # Display Projects in a Table
-        projects = query_db("SELECT id, name, description, start_date, end_date FROM projects")
-        if projects:
-            project_df = pd.DataFrame(projects, columns=["ID", "Name", "Description", "Start Date", "End Date"])
-            st.dataframe(project_df, use_container_width=True)
-        else:
-            st.info("No projects found.")
+        
+        # In the Projects page section, update the projects_data query to include actual dates:
+        # In your Projects page section (where the analytics table is displayed)
 
+        # First, fetch all project data with proper status calculations
+        projects_data = query_db("""
+            SELECT 
+                p.id, 
+                p.user_id as owner_id, 
+                p.name, 
+                p.description, 
+                p.start_date as planned_start_date,
+                p.end_date as planned_deadline,
+                p.budget,
+                ROUND(COALESCE(SUM(t.actual_cost), 0)) as actual_cost,
+                ROUND(p.budget - COALESCE(SUM(t.actual_cost), 0)) as budget_variance,
+                COUNT(t.id) as task_count,
+                SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) as completed_tasks,
+                u.username as owner_name,
+                (ROUND(SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) * 100.0 / 
+                NULLIF(COUNT(t.id), 0), 2)) as completion_pct,
+                julianday(p.end_date) - julianday(p.start_date) as planned_duration,
+                CASE
+                    WHEN MIN(t.actual_start_date) IS NULL OR MAX(t.actual_deadline) IS NULL THEN NULL
+                    ELSE julianday(MAX(t.actual_deadline)) - julianday(MIN(t.actual_start_date))
+                END as actual_duration,
+                MIN(t.actual_start_date) as actual_start_date,  
+                MAX(t.actual_deadline) as actual_deadline,      
+                CASE 
+                    WHEN COUNT(t.id) = 0 THEN 0
+                    WHEN SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) = COUNT(t.id) THEN 1
+                    ELSE 0
+                END as is_completed
+            FROM projects p
+            LEFT JOIN tasks t ON p.id = t.project_id
+            LEFT JOIN users u ON p.user_id = u.id
+            GROUP BY p.id
+        """)
+
+        # Convert to DataFrame
+        project_df = pd.DataFrame(projects_data, columns=[
+            "ID", "Owner ID", "Project", "Description", "Planned Start Date", "Planned Deadline",
+            "Budget", "Actual Cost", "Budget Variance", "Total Tasks",
+            "Completed Tasks", "Owner", "Completion %",
+            "Planned Duration (days)", "Actual Duration (days)",
+            "Actual Start Date", "Actual Deadline", "is_completed"
+        ])
+
+        # Ensure date columns are proper datetime objects
+        date_cols = ["Planned Start Date", "Planned Deadline", "Actual Start Date", "Actual Deadline"]
+        for col in date_cols:
+            project_df[col] = pd.to_datetime(project_df[col])
+
+        # Create filter widgets in an expandable section
+        with st.expander("🔍 Filter Projects", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # Project name filter (multi-select)
+                project_names = ["All Projects"] + sorted(project_df["Project"].unique().tolist())
+                selected_projects = st.multiselect(
+                    "Filter by Project",
+                    options=project_names,
+                    default=["All Projects"],
+                    key="project_filter"
+                )
+                
+            with col2:
+                # Owner filter
+                owner_options = ["All Owners"] + sorted(project_df["Owner"].dropna().unique().tolist())
+                selected_owner = st.selectbox(
+                    "Filter by Owner",
+                    options=owner_options,
+                    key="owner_filter"
+                )
+                
+            with col3:
+                # Status filter (based on completion)
+                status_options = ["All", "Completed", "In Progress", "Not Started"]
+                selected_status = st.selectbox(
+                    "Filter by Status",
+                    options=status_options,
+                    key="status_filter"
+                )
+
+            col4, col5 = st.columns(2)
+            with col4:
+                # Date range filter
+                min_date = project_df["Planned Start Date"].min().date()
+                max_date = project_df["Planned Deadline"].max().date()
+                date_range = st.date_input(
+                    "Date Range",
+                    value=[min_date, max_date],
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="date_filter"
+                )
+                
+            with col5:
+                # Budget variance filter
+                budget_filter = st.slider(
+                    "Minimum Budget Variance ($)",
+                    min_value=int(project_df["Budget Variance"].min()),
+                    max_value=int(project_df["Budget Variance"].max()),
+                    value=int(project_df["Budget Variance"].min()),
+                    key="budget_filter"
+                )
+
+        # Apply filters
+        filtered_df = project_df.copy()
+
+        # Project name filter
+        if "All Projects" not in selected_projects and selected_projects:
+            filtered_df = filtered_df[filtered_df["Project"].isin(selected_projects)]
+
+        # Owner filter
+        if selected_owner != "All Owners":
+            filtered_df = filtered_df[filtered_df["Owner"] == selected_owner]
+
+        # Status filter
+        if selected_status == "Completed":
+            filtered_df = filtered_df[filtered_df["is_completed"] == 1]
+        elif selected_status == "In Progress":
+            filtered_df = filtered_df[(filtered_df["is_completed"] == 0) & (filtered_df["Total Tasks"] > 0)]
+        elif selected_status == "Not Started":
+            filtered_df = filtered_df[filtered_df["Total Tasks"] == 0]
+
+        # Date range filter
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            filtered_df = filtered_df[
+                (filtered_df["Planned Start Date"].dt.date >= start_date) &
+                (filtered_df["Planned Deadline"].dt.date <= end_date)
+            ]
+
+        # Budget variance filter
+        filtered_df = filtered_df[filtered_df["Budget Variance"] >= budget_filter]
+
+        # Display the filtered table
+        st.subheader("📊 Project Analytics")
+
+        # Format the display DataFrame (without affecting filtering)
+        display_df = filtered_df.copy()
+        display_df["Planned Start Date"] = display_df["Planned Start Date"].dt.strftime('%Y-%m-%d')
+        display_df["Planned Deadline"] = display_df["Planned Deadline"].dt.strftime('%Y-%m-%d')
+        display_df["Actual Start Date"] = display_df["Actual Start Date"].dt.strftime('%Y-%m-%d')
+        display_df["Actual Deadline"] = display_df["Actual Deadline"].dt.strftime('%Y-%m-%d')
+
+        # Show metrics summary
+        st.metric("Projects Shown", len(filtered_df), delta=f"{len(filtered_df)}/{len(project_df)}")
+
+        # Display the table
+        st.dataframe(
+            display_df[[
+                "Project", "Owner", "Planned Start Date", "Planned Deadline",
+                "Actual Start Date", "Actual Deadline", "Total Tasks",
+                "Completed Tasks", "Completion %", "Budget", "Actual Cost",
+                "Budget Variance"
+            ]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Completion %": st.column_config.ProgressColumn(
+                    "Completion %",
+                    help="Project completion percentage",
+                    format="%.1f%%",
+                    min_value=0,
+                    max_value=100,
+                ),
+                "Budget": st.column_config.NumberColumn(
+                    "Budget ($)",
+                    format="$%.2f",
+                ),
+                "Actual Cost": st.column_config.NumberColumn(
+                    "Actual Cost ($)",
+                    format="$%.2f",
+                ),
+                "Budget Variance": st.column_config.NumberColumn(
+                    "Budget Variance ($)",
+                    format="$%.2f",
+                )
+            }
+        )
+
+
+
+        # Add export functionality for project analytics data:
+        with st.expander("📤 Export Project Analytics Data"):
+            csv = project_df.to_csv(index=False)
+            st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="project_analytics_data.csv",
+            mime="text/csv"
+        )
+
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+
+                
+        
         # Edit and Delete Projects
         st.write("### Edit or Delete Projects")
-        for project in projects:
-            with st.expander(f"Edit Project: {project[1]}", expanded=False):
-                with st.form(f"edit_project_{project[0]}"):
-                    new_name = st.text_input("Project Name", value=project[1])
-                    new_description = st.text_area("Description", value=project[2])
-                    new_start_date = st.date_input("Start Date", value=datetime.strptime(project[3], "%Y-%m-%d").date())
-                    new_end_date = st.date_input("End Date", value=datetime.strptime(project[4], "%Y-%m-%d").date())
+        
+        # Create dropdown for project selection
+        project_options = ["Select a project..."] + [f"{project[2]} (ID: {project[0]})" for project in projects_data]
+        selected_project = st.selectbox("Select Project to Edit/Delete", project_options, key="project_select")
+        
+        if selected_project != "Select a project...":
+            selected_project_id = int(selected_project.split("ID: ")[1].rstrip(")"))
+            project_to_edit = next((project for project in projects_data if project[0] == selected_project_id), None)
+            
+            if project_to_edit:
+                # Initialize session state variables
+                if 'confirm_delete_project' not in st.session_state:
+                    st.session_state.confirm_delete_project = False
+                if 'editing_project' not in st.session_state:
+                    st.session_state.editing_project = True
+                
+                # Display edit form unless in delete confirmation or edit mode is False
+                if not st.session_state.confirm_delete_project and st.session_state.editing_project:
+                    st.write(f"### Editing: {project_to_edit[2]}")
+                    
+                    with st.form(f"edit_project_{project_to_edit[0]}"):
+                        # Define all form variables at the start
+                        new_name = st.text_input("Project Name*", 
+                                            value=project_to_edit[2],
+                                            help="Project name must be unique (case-insensitive)")
+                        
+                        new_description = st.text_area("Description", 
+                                                    value=project_to_edit[3] if len(project_to_edit) > 3 else "")
+                        
+                        # Get user options as a dictionary {id: username}
+                        users = query_db("SELECT id, username FROM users")
+                        user_options = {user[0]: user[1] for user in users}
+                        
+                        # Project Owner Dropdown (only for admins)
+                        if st.session_state.user_role == "Admin":
+                            current_owner_result = query_db(
+                                "SELECT username FROM users WHERE id=?", 
+                                (project_to_edit[1],), 
+                                one=True
+                            )
+                            current_owner = current_owner_result[0] if current_owner_result else "Unknown"
+                            
+                            # Create list of usernames for the selectbox
+                            usernames = list(user_options.values())
+                            new_owner = st.selectbox(
+                                "Project Owner*",
+                                options=usernames,
+                                index=usernames.index(current_owner) if current_owner in usernames else 0
+                            )
+                            new_owner_id = [uid for uid, uname in user_options.items() if uname == new_owner][0]
+                        else:
+                            new_owner_id = project_to_edit[1]
+                            owner_name_result = query_db(
+                                "SELECT username FROM users WHERE id=?", 
+                                (project_to_edit[1],), 
+                                one=True
+                            )
+                            owner_name = owner_name_result[0] if owner_name_result else "Unknown"
+                            st.write(f"**Project Owner:** {owner_name}")
+                        
+                        # Project Dates
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            new_start_date = st.date_input(
+                                "Start Date*",
+                                value=datetime.strptime(project_to_edit[4], "%Y-%m-%d").date() if len(project_to_edit) > 4 else datetime.now().date()
+                            )
+                        with col2:
+                            new_end_date = st.date_input(
+                                "Due Date*",
+                                value=datetime.strptime(project_to_edit[5], "%Y-%m-%d").date() if len(project_to_edit) > 5 else datetime.now().date()
+                            )
+                        
+                        # Project Budget
+                        budget_value = float(project_to_edit[6]) if len(project_to_edit) > 6 and project_to_edit[6] is not None else 0.0
+                        new_budget = st.number_input(
+                            "Project Budget", 
+                            min_value=0.0, 
+                            value=budget_value
+                        )
+                        
+                        # Form buttons column layout
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            submit_button = st.form_submit_button("💾 Save Changes")
+                        with col2:
+                            cancel_button = st.form_submit_button("❌ Cancel")
+                        
+                        # Handle form submission
+                        if submit_button:
+                            # Validate inputs
+                            if not new_name.strip():
+                                st.error("Project name is required")
+                            elif new_end_date < new_start_date:
+                                st.error("Due date must be on or after the start date")
+                            else:
+                                # Check for duplicate name (excluding current project)
+                                existing_project = query_db(
+                                    "SELECT 1 FROM projects WHERE LOWER(name) = LOWER(?) AND id != ?", 
+                                    (new_name.strip(), project_to_edit[0]), 
+                                    one=True
+                                )
+                                
+                                if existing_project:
+                                    st.error(f"A project with name '{new_name.strip()}' already exists")
+                                else:
+                                    query_db("""
+                                        UPDATE projects 
+                                        SET name=?, description=?, user_id=?, 
+                                            start_date=?, end_date=?, budget=?
+                                        WHERE id=?
+                                    """, (
+                                        new_name.strip(), 
+                                        new_description, 
+                                        new_owner_id,
+                                        new_start_date, 
+                                        new_end_date, 
+                                        new_budget, 
+                                        project_to_edit[0]
+                                    ))
+                                    st.toast("✅ Changes updated successfully!", icon="✅")
+                                    st.session_state.editing_project = False
+                                    st.rerun()
+                        
+                        if cancel_button:
+                            st.session_state.editing_project = False
+                            st.rerun()
+                
+                # Delete confirmation section (outside the form)
+                if st.session_state.confirm_delete_project:
+                    st.warning(f"⚠️ Are you sure you want to delete project '{project_to_edit[2]}'?")
+                    st.error("This will delete ALL associated tasks and cannot be undone!")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ Confirm Delete", key=f"confirm_del_proj_{project_to_edit[0]}"):
+                            delete_project(project_to_edit[0])
+                            st.toast("🗑️ Project deleted successfully!", icon="🗑️")
+                            st.session_state.confirm_delete_project = False
+                            st.session_state.editing_project = False
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ Cancel", key=f"cancel_del_proj_{project_to_edit[0]}"):
+                            st.session_state.confirm_delete_project = False
+                            st.rerun()
+                else:
+                    # Show edit button if not currently editing
+                    if not st.session_state.editing_project:
+                        if st.button("✏️ Edit Project", key=f"edit_{project_to_edit[0]}"):
+                            st.session_state.editing_project = True
+                            st.rerun()
+                    
+                    # Delete button (only show when not editing)
+                    if not st.session_state.editing_project:
+                        if st.button("🗑️ Delete Project", key=f"init_del_proj_{project_to_edit[0]}", type="primary"):
+                            st.session_state.confirm_delete_project = True
+                            st.rerun()
 
-                    if st.form_submit_button("Update Project"):
-                        query_db("""
-                            UPDATE projects
-                            SET name=?, description=?, start_date=?, end_date=?
-                            WHERE id=?
-                        """, (
-                            new_name,
-                            new_description,
-                            new_start_date,
-                            new_end_date,
-                            project[0]
-                        ))
-                        st.success("Project updated successfully!")
-                        st.rerun()
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
 
-                if st.button(f"Delete Project {project[1]}", key=f"delete_button_{project[0]}"):
-                    delete_project(project[0])
-                    st.success("Project deleted successfully!")
-                    st.rerun()
-
-
-        # System Settings Section
+        # ======= System Settings Section =======
         st.subheader("⚙️ System Settings")
         with st.expander("Customize System Settings", expanded=False):
             with st.form("system_settings_form"):
                 default_reminder_period = st.number_input("Default Reminder Period (days)", min_value=1, value=7)
                 enable_email_notifications = st.checkbox("Enable Email Notifications", value=True)
 
-                if st.form_submit_button("Save Settings"):
+                submitted = st.form_submit_button("Save Settings")
+                if submitted:
                     st.session_state.reminder_period = default_reminder_period
                     st.success("System settings updated successfully!")
                     st.rerun()
-    
+
+        # Add another divider at the bottom for clean separation
+        st.markdown("---")
 
 
 
     # Profile Page
     elif page == "Profile":
-        st.title("👤 Profile")
+        st.markdown("---")
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+        </style>
+        """, unsafe_allow_html=True)
 
-        # Fetch current user data
-        user = query_db("SELECT * FROM users WHERE id=?", (st.session_state.user_id,), one=True)
-        if not user:
-            st.error("User not found.")
-            st.stop()  # Stop execution if user is not found
 
-        # Display Profile Picture
-        st.subheader("🖼️ Profile Picture")
-        if len(user) > 11 and user[11]:  # Check if profile_picture exists
-            st.image(user[11], width=150, caption="Current Profile Picture", use_container_width=False)  # Updated parameter
-        else:
-            st.write("No profile picture uploaded.")
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">👤 User Profile</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        
+        st.markdown("---")
+        
+        
+        # Display user profile information
+        display_user_profile(st.session_state.user_id)
 
-        # Upload New Profile Picture
-        uploaded_file = st.file_uploader("Upload a new profile picture", type=["jpg", "jpeg", "png"])
-        if uploaded_file is not None:
-            profile_picture = uploaded_file.read()
-            query_db("UPDATE users SET profile_picture=? WHERE id=?", (profile_picture, st.session_state.user_id))
-            st.success("Profile picture updated successfully!")
-            st.rerun()
-
-        # Display User Information
-        st.subheader("📝 Profile Information")
-        col1, col2 = st.columns(2)
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)  
+        
+        # Success notification state
+        if 'profile_update_success' not in st.session_state:
+            st.session_state.profile_update_success = False
+        if 'password_change_success' not in st.session_state:
+            st.session_state.password_change_success = False
+        
+        # Display success notifications
+        if st.session_state.profile_update_success:
+            st.success("✅ Profile updated successfully!")
+            st.session_state.profile_update_success = False
+        
+        if st.session_state.password_change_success:
+            st.success("✅ Password changed successfully!")
+            st.session_state.password_change_success = False
+        
+        # Main profile layout
+        col1, col2 = st.columns([1, 2], gap="large")
+        
         with col1:
-            st.write(f"**Username:** {user[1]}")
-            st.write(f"**Email:** {user[9]}")
+            # Profile Picture Section
+            st.subheader("Profile Picture")
+            user = query_db("SELECT profile_picture FROM users WHERE id=?", (st.session_state.user_id,), one=True)
+            
+            if user and user[0]:
+                st.image(user[0], width=150)
+            else:
+                st.image("https://via.placeholder.com/150", width=150)
+            
+            uploaded_file = st.file_uploader("Upload new photo", type=["jpg", "jpeg", "png"])
+            
         with col2:
-            st.write(f"**Phone:** {user[10]}")
-            st.write(f"**Role:** {user[3]}")
-
-        # Edit Profile Form
-        st.subheader("✏️ Edit Profile")
-        with st.form("edit_profile_form"):
-            new_email = st.text_input("Email", value=user[9])
-            new_phone = st.text_input("Phone", value=user[10])
-            new_first_name = st.text_input("First Name", value=user[4])
-            new_last_name = st.text_input("Last Name", value=user[5])
-            new_job_title = st.text_input("Job Title", value=user[7])
-            new_department = st.text_input("Department", value=user[8])
-
-            if st.form_submit_button("Update Profile"):
-                query_db("""
-                    UPDATE users
-                    SET email=?, phone=?, first_name=?, last_name=?, job_title=?, department=?
-                    WHERE id=?
-                """, (
-                    new_email,
-                    new_phone,
-                    new_first_name,
-                    new_last_name,
-                    new_job_title,
-                    new_department,
-                    st.session_state.user_id
-                ))
-                st.success("Profile updated successfully!")
-                st.rerun()
-
-        # Change Password
-        st.subheader("🔒 Change Password")
-        with st.form("change_password_form"):
+            # Profile Information Section
+            st.subheader("Personal Information")
+            user = query_db("""
+                SELECT username, first_name, last_name, email, phone, 
+                    company, job_title, department, profile_picture
+                FROM users WHERE id=?
+            """, (st.session_state.user_id,), one=True)
+            
+            with st.form("profile_form"):
+                cols = st.columns(2)
+                with cols[0]:
+                    first_name = st.text_input("First Name", value=user[1] if user[1] else "")
+                    email = st.text_input("Email", value=user[3] if user[3] else "")
+                    company = st.text_input("Company", value=user[5] if user[5] else "")
+                with cols[1]:
+                    last_name = st.text_input("Last Name", value=user[2] if user[2] else "")
+                    phone = st.text_input("Phone", value=user[4] if user[4] else "")
+                    job_title = st.text_input("Job Title", value=user[6] if user[6] else "")
+                
+                department = st.text_input("Department", value=user[7] if user[7] else "")
+                
+                if st.form_submit_button("Update Profile"):
+                    # Handle profile picture upload
+                    profile_pic = user[8]  # Keep existing if no new upload
+                    if uploaded_file is not None:
+                        profile_pic = uploaded_file.read()
+                    
+                    query_db("""
+                        UPDATE users SET
+                            first_name=?, last_name=?, email=?,
+                            phone=?, company=?, job_title=?,
+                            department=?, profile_picture=?
+                        WHERE id=?
+                    """, (
+                        first_name, last_name, email,
+                        phone, company, job_title,
+                        department, profile_pic,
+                        st.session_state.user_id
+                    ))
+                    st.session_state.profile_update_success = True
+                    st.rerun()
+        
+        # Change Password Section
+        st.divider()
+        st.subheader("Change Password")
+        
+        with st.form("password_form"):
             current_password = st.text_input("Current Password", type="password")
             new_password = st.text_input("New Password", type="password")
             confirm_password = st.text_input("Confirm New Password", type="password")
-
+            
             if st.form_submit_button("Change Password"):
-                if not verify_password(user[2], current_password):
-                    st.error("Current password is incorrect.")
+                # Verify current password
+                user = query_db("SELECT password FROM users WHERE id=?", (st.session_state.user_id,), one=True)
+                if not verify_password(user[0], current_password):
+                    st.error("Current password is incorrect")
                 elif new_password != confirm_password:
-                    st.error("New passwords do not match.")
+                    st.error("New passwords don't match")
+                elif len(new_password) < 8:
+                    st.error("Password must be at least 8 characters")
                 else:
-                    query_db("UPDATE users SET password=? WHERE id=?", (hash_password(new_password), st.session_state.user_id))
-                    st.success("Password updated successfully!")
+                    query_db("UPDATE users SET password=? WHERE id=?", 
+                            (hash_password(new_password), st.session_state.user_id))
+                    st.session_state.password_change_success = True
                     st.rerun()
 
-        # Activity Summary
-        st.subheader("📊 Activity Summary")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            tasks_assigned = len(get_tasks())
-            st.metric("Tasks Assigned", tasks_assigned)
-        with col2:
-            tasks_completed = len([task for task in get_tasks() if task[4] == "Completed"])
-            st.metric("Tasks Completed", tasks_completed)
-        with col3:
-            projects_involved = len(get_projects())
-            st.metric("Projects Involved", projects_involved)
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        
 
-        # Visualize Activity
-        st.write("### Task Completion Trends")
+        # ======= Activity Summary Section =======
+        st.subheader("📊 Activity Summary")
+
+        # Custom CSS for the cards (similar to Notifications page)
+        st.markdown("""
+        <style>
+            .metric-card {
+                border-radius: 8px;
+                background-color: #FFFFFF;
+                padding: 16px;
+                margin-bottom: 16px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                transition: all 0.3s ease;
+            }
+            .metric-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            }
+            .metric-title {
+                font-size: 0.9rem;
+                color: #666;
+                margin-bottom: 8px;
+            }
+            .metric-value {
+                font-size: 1.8rem;
+                font-weight: 700;
+                color: #2c3e50;
+                margin: 0;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Get activity data
+        tasks_assigned = len(get_tasks())
+        tasks_completed = len([task for task in get_tasks() if task[4] == "Completed"])
+        projects_involved = len(get_projects())
+
+        # Create cards in columns
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown(f"""
+            <div class="metric-card" style="border-left: 4px solid #4E8BF5;">
+                <div class="metric-title">Tasks Assigned</div>
+                <div class="metric-value">{tasks_assigned}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col2:
+            st.markdown(f"""
+            <div class="metric-card" style="border-left: 4px solid #32CD32;">
+                <div class="metric-title">Tasks Completed</div>
+                <div class="metric-value">{tasks_completed}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col3:
+            st.markdown(f"""
+            <div class="metric-card" style="border-left: 4px solid #FFA500;">
+                <div class="metric-title">Projects Involved</div>
+                <div class="metric-value">{projects_involved}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Completion rate visualization
         if tasks_assigned > 0:
             completion_rate = (tasks_completed / tasks_assigned) * 100
-            fig_completion = px.pie(
-                names=["Completed", "Pending"],
-                values=[tasks_completed, tasks_assigned - tasks_completed],
-                title="Task Completion Rate"
-            )
-            st.plotly_chart(fig_completion)
-        else:
-            st.info("No tasks assigned.")
+            remaining_rate = 100 - completion_rate
+            
+            st.markdown("---")
+            st.write("### Task Completion Progress")
+            
+            # Create a completion card similar to notification cards
+            st.markdown(f"""
+            <div class="metric-card" style="border-left: 4px solid #6BB9F0; margin-top: 16px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span class="metric-title">Overall Completion Rate</span>
+                    <span style="font-weight: 600; color: #2c3e50;">{completion_rate:.1f}%</span>
+                </div>
+                <div style="height: 8px; background: #f0f0f0; border-radius: 4px; overflow: hidden;">
+                    <div style="width: {completion_rate}%; height: 100%; background: #4CAF50;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 8px;">
+                    <span style="font-size: 0.8rem; color: #666;">Completed: {tasks_completed}</span>
+                    <span style="font-size: 0.8rem; color: #666;">Pending: {tasks_assigned - tasks_completed}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 
+            
+            # Divider
+            st.markdown("---")
+            st.header("📊 Your Task Analytics")
 
-    
-    
-    
-    
+            
+            # Fetch the user's tasks with proper error handling
+            try:
+                # Get tasks assigned to the current user
+                tasks = query_db("""
+                    SELECT 
+                        t.id, t.title, t.status, t.priority, t.deadline, 
+                        t.time_spent, p.name as project_name,
+                        t.start_date, t.actual_start_date,
+                        t.deadline as planned_deadline, t.actual_deadline,
+                        t.budget, t.actual_cost
+                    FROM tasks t
+                    JOIN projects p ON t.project_id = p.id
+                    WHERE t.assigned_to = ?
+                """, (st.session_state.user_id,))
+                
+                if not tasks:
+                    st.info("No tasks found for your account.")
+                else:
+                    # Create DataFrame with proper column names
+                    tasks_df = pd.DataFrame(tasks, columns=[
+                        "ID", "Title", "Status", "Priority", "Deadline", 
+                        "Time Spent", "Project",
+                        "Planned Start", "Actual Start",
+                        "Planned Deadline", "Actual Deadline",
+                        "Budget", "Actual Cost"
+                    ])
+                    
+                    # Convert date columns
+                    date_cols = ["Deadline", "Planned Start", "Actual Start", "Planned Deadline", "Actual Deadline"]
+                    for col in date_cols:
+                        tasks_df[col] = pd.to_datetime(tasks_df[col])
+                    
+                    # Calculate additional metrics
+                    today = pd.Timestamp.today()
+                    tasks_df["Days Until Deadline"] = (tasks_df["Deadline"] - today).dt.days
+                    tasks_df["Duration Variance"] = (tasks_df["Actual Deadline"] - tasks_df["Planned Deadline"]).dt.days
+                    tasks_df["Budget Variance"] = tasks_df["Budget"] - tasks_df["Actual Cost"]
+                    
+                    # Create tabs for different visualizations
+                    tab1, tab2, tab3 = st.tabs(["Productivity", "Time Management", "Performance"])
+                    
+                    with tab1:
+
+                        # --- NEW: Project Task Status Bar Chart ---
+                        st.subheader("📋 Tasks by Project and Status")
+                        
+                        # Group by Project and Status
+                        project_status_counts = tasks_df.groupby(['Project', 'Status']).size().unstack(fill_value=0)
+                        
+                        # Create stacked bar chart
+                        fig = px.bar(
+                            project_status_counts,
+                            x=project_status_counts.index,
+                            y=project_status_counts.columns,
+                            title="Your Tasks by Project and Status",
+                            labels={'value': 'Number of Tasks', 'index': 'Project'},
+                            color_discrete_map={
+                                'Pending': '#FFA500',  # Orange
+                                'In Progress': '#1E90FF',  # DodgerBlue
+                                'Completed': '#32CD32',  # LimeGreen
+                                'Overdue': '#FF4500'  # OrangeRed
+                            }
+                        )
+                        
+                        # Improve layout
+                        fig.update_layout(
+                            barmode='stack',
+                            xaxis_title="Project",
+                            yaxis_title="Number of Tasks",
+                            legend_title="Task Status",
+                            hovermode="x unified"
+                        )
+                        
+                        # Display the chart
+                        st.plotly_chart(fig, use_container_width=True)
+
+
+                        st.subheader("🔄 Task Completion Rate")
+                        
+                        # Weekly completion rate
+                        completed_tasks = tasks_df[tasks_df["Status"] == "Completed"]
+                        if not completed_tasks.empty:
+                            weekly_completion = completed_tasks.groupby(
+                                pd.Grouper(key="Actual Deadline", freq="W-MON")
+                            ).size().reset_index(name="Tasks Completed")
+                            
+                            fig = px.line(
+                                weekly_completion,
+                                x="Actual Deadline",
+                                y="Tasks Completed",
+                                title="Your Weekly Task Completion",
+                                markers=True
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No completed tasks to show completion rate.")
+                        
+                        # Status distribution
+                        st.subheader("📊 Current Task Status")
+                        status_counts = tasks_df["Status"].value_counts().reset_index()
+                        fig = px.pie(
+                            status_counts,
+                            names="Status",
+                            values="count",
+                            title="Your Task Status Distribution"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with tab2:
+                        st.subheader("⏱️ Time Management")
+
+                        # Risk metric
+                        st.subheader("⚡ Risk Matrix - Priority vs Days Overdue")
+                        tasks_df['Days_Overdue'] = (pd.to_datetime('today') - 
+                                                    pd.to_datetime(tasks_df['Deadline'])).dt.days
+                        fig = px.scatter(
+                            tasks_df,
+                            x='Days_Overdue',
+                            y='Priority',
+                            color='Project',
+                            size='Budget',
+                            title='Task Risk Assessment',
+                            labels={'Days_Overdue': 'Days Overdue'}
+                        )
+                        st.plotly_chart(fig, use_container_width=True)   
+                        
+                        # Duration variance
+                        if "Actual Deadline" in tasks_df.columns and "Planned Deadline" in tasks_df.columns:
+                            fig = px.scatter(
+                                tasks_df,
+                                x="Planned Deadline",
+                                y="Duration Variance",
+                                color="Project",
+                                title="Planned vs Actual Duration Variance",
+                                hover_data=["Title", "Project"]
+                            )
+                            fig.add_hline(y=0, line_dash="dash", line_color="red")
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Time spent distribution
+                        st.subheader("⏳ Time Spent Analysis")
+                        fig = px.box(
+                            tasks_df,
+                            x="Project",
+                            y="Time Spent",
+                            color="Priority",
+                            title="Time Spent by Project and Priority"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with tab3:
+                        st.subheader("📈 Budget Performance")
+                        
+                        # Budget variance
+                        if "Budget Variance" in tasks_df.columns:
+                            fig = px.bar(
+                                tasks_df,
+                                x="Project",
+                                y="Budget Variance",
+                                color="Priority",
+                                title="Your Budget Variance by Project",
+                                labels={"Budget Variance": "Budget Variance ($)"}
+                            )
+                            fig.add_hline(y=0, line_dash="dash", line_color="green")
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Efficiency metric
+                        st.subheader("⚡ Your Efficiency")
+                        efficiency_df = tasks_df.groupby("Project").agg({
+                            "Time Spent": "sum",
+                            "Budget Variance": "mean"
+                        }).reset_index()
+                        
+                        fig = px.scatter(
+                            efficiency_df,
+                            x="Time Spent",
+                            y="Budget Variance",
+                            size="Time Spent",
+                            color="Project",
+                            title="Time Investment vs Budget Performance",
+                            labels={
+                                "Time Spent": "Total Hours Spent",
+                                "Budget Variance": "Average Budget Variance ($)"
+                            }
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+
+            except Exception as e:
+                st.error(f"Error loading task data: {str(e)}")
+                st.info("Please try refreshing the page or contact support if the problem persists.")
+
+
+        # Final divider at bottom
+        st.markdown("---")    
+
+ 
+
     # Documentation Page
     elif page == "Documentation":
-        st.title("📚 Documentation")
+        st.markdown("---")
+
+        # Custom CSS for enhanced styling
+        st.markdown("""
+        <style>
+            .doc-header {
+                background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+ 
+        </style>
+        """, unsafe_allow_html=True)
+
+
+        # Header Section with Gradient
+        st.markdown("""
+        <div class="doc-header">
+            <h1 style="color: white; margin-bottom: 0.5rem;">📚 Knowledge Center</h1>
+            <p style="font-size: 1.1rem; opacity: 0.9;">Comprehensive guides and resources for all app features</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("---")
 
         # Introduction
-        st.write("Welcome to the **Project Management App Documentation**! This guide will help you get started with the app and make the most of its features.")
+        st.markdown("""
+        <div style="background-color: #f9f7ff; padding: 1.5rem; border-radius: 10px; margin-bottom: 2rem;">
+            <h3 style="color: #6e48aa; margin-top: 0;">Welcome To The Project Management App Documentation</h3>
+            <p>This documentation provides detailed information about all features and functionality. 
+            Expand the sections below to access guides tailored to your needs.</p>
+        </div>
+        """, unsafe_allow_html=True)         
 
-        # Getting Started
+        st.markdown("---")
+        # st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        
+
+        # Collapsible Sections
         with st.expander("🚀 Getting Started", expanded=True):
-            st.write("""
-            ### 1. **Create an Account**
-            - If you're a new user, click on the **Register** button on the login page to create an account.
-            - Fill in your details (e.g., username, password, email) and click **Register**.
-
-            ### 2. **Log In**
-            - Enter your username and password on the login page and click **Login**.
-
-            ### 3. **Explore the Dashboard**
-            - After logging in, you'll be taken to the **Dashboard**, where you can see an overview of your projects and tasks.
+            st.markdown("""
+            ### 1. **Account Creation**
+            - **New Users**: Register via the login page with your email and password
+            - **First-Time Setup**: Complete your profile after registration
+            
+            ### 2. **Initial Navigation**
+            - **Dashboard**: Your central hub for project overviews
+            - **Projects**: Create and manage your projects
+            - **Tasks**: View and update individual tasks
+            
+            ### 3. **Quick Tips**
+            - Use the sidebar to navigate between features
+            - Hover over buttons for tooltips
+            - Click on any card to see detailed information
             """)
+            
+            st.image("https://via.placeholder.com/800x300?text=Getting+Started+Screenshot", 
+                    caption="Getting Started Overview", use_container_width=True)
 
-        # Projects
-        with st.expander("📂 Projects", expanded=False):
-            st.write("""
-            ### 1. **Create a Project**
-            - Go to the **Projects** page and click **Add Project**.
-            - Fill in the project details (e.g., name, description, start date, end date) and click **Save**.
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
-            ### 2. **Edit or Delete a Project**
-            - On the **Projects** page, click the **Edit** or **Delete** button next to the project you want to modify.
-
-            ### 3. **View Project Details**
-            - Click on a project to view its details, including tasks, progress, and deadlines.
+        with st.expander("📂 Projects Guide"):
+            st.markdown("""
+            ### Project Management
+            
+            #### Creating Projects
+            1. Navigate to the Projects page
+            2. Click "Add New Project"
+            3. Fill in project details:
+            - Name (required)
+            - Description
+            - Start/End Dates
+            - Budget (optional)
+            
+            #### Managing Projects
+            - **View Projects**: See all projects in card view or list format
+            - **Edit Projects**: Click the edit button on any project card
+            - **Delete Projects**: Remove projects (admin-only feature)
+            
+            #### Best Practices
+            - Set clear project names and descriptions
+            - Establish realistic timelines
+            - Assign team members early
             """)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.image("https://via.placeholder.com/400x250?text=Project+Creation", 
+                        caption="Creating a New Project", use_container_width=True)
+            with col2:
+                st.image("https://via.placeholder.com/400x250?text=Project+View", 
+                        caption="Project Management View", use_container_width=True)
 
-        # Tasks
-        with st.expander("✅ Tasks", expanded=False):
-            st.write("""
-            ### 1. **Add a Task**
-            - Go to the **Tasks** page and click **Add Task**.
-            - Fill in the task details (e.g., title, description, deadline, priority) and click **Save**.
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
-            ### 2. **Update Task Status**
-            - On the **Tasks** page, use the status dropdown to update the task status (e.g., Pending, In Progress, Completed).
-
-            ### 3. **Track Task Progress**
-            - Use the **Gantt Chart** on the **Dashboard** or **Tasks** page to track task progress and deadlines.
+        with st.expander("✅ Tasks Guide"):
+            st.markdown("""
+            ### Task Management
+            
+            #### Creating Tasks
+            1. Select a project from the dropdown
+            2. Click "Add New Task"
+            3. Provide task details:
+            - Title (required)
+            - Detailed description
+            - Priority level
+            - Deadline
+            - Assignee
+            
+            #### Task Features
+            - **Status Tracking**: Update task progress (Pending/In Progress/Completed)
+            - **Priority Levels**: Visual indicators for task urgency
+            - **Overdue Alerts**: Automatic highlighting of late tasks
+            
+            #### Productivity Tips
+            - Break large tasks into subtasks
+            - Use priorities effectively
+            - Regularly update task statuses
             """)
+            
+            st.image("https://via.placeholder.com/800x300?text=Task+Management+Screenshot", 
+                    caption="Task Management Interface", use_container_width=True)
 
-        # Reports
-        with st.expander("📊 Reports", expanded=False):
-            st.write("""
-            ### 1. **Generate Reports**
-            - Go to the **Reports** page to view time tracking and task completion trends.
-            - Use the filters to customize the report (e.g., by project, priority, date range).
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
-            ### 2. **Export Reports**
-            - Click the **Export** button to download the report as a CSV or Excel file.
+
+
+
+        # Workspace Guide
+        with st.expander("🖥️ Workspace Guide"):
+            st.markdown("""
+            ### Workspace Overview
+            
+            #### Key Features
+            - **Task Management**: Manage tasks in List, Kanban, or Gantt views
+            - **Task Progress**: Monitor completion rates with metrics and pie charts
+            - **Team Management**: TView and manage project members
+            
+            #### Sections Explained
+            1. **Select Workspace**
+            - Choose a project from the dropdown to access its workspace
+            - The list includes all projects you have access to, with project owners highlighted
+            - Only admins and owners can modify project settings           
+            
+            2. **Tabs Overview**
+                        
+            a. 📋 Tasks
+            - Manage tasks in List, Kanban, or Gantt views
+            - Create, edit, and track progress with deadlines, priorities, and assignments
+            - Owners and assignees can update task statuses
+            
+            b. 📂 Files
+            - Upload, share, and organize project files (PDF, DOCX, etc.)
+            - Files can be linked to specific tasks or the overall project
+            - Download or delete files with appropriate permissions
+                        
+            c. 💬 Discussions
+            - Start topic-based conversations with threaded replies
+            - Archive resolved discussions to keep the workspace clutter-free
+            - Search by keywords to find past messages
+
+            d. 📅 Timeline
+            - Visualize task deadlines and dependencies in an interactive Gantt chart
+            - The "Today" marker helps track progress against schedules
+
+            e. 📊 Progress
+            - Monitor completion rates with metrics and pie charts
+            - Automatically updates based on task status (e.g., "Completed" vs. "Pending")
+                              
+            f. 👥 Team
+            - View and manage project members
+            - Owners/admins can add or remove users                           
+            - Roles and contact details are displayed for coordination
+                        
+            #### Export Options
+            - Download any chart as PNG
+            - Export all data as CSV
+            - Print reports directly from the dashboard
             """)
+            
+            st.image("https://via.placeholder.com/800x400?text=Dashboard+Screenshot", 
+                    caption="Dashboard Overview", use_container_width=True)
 
-        # Notifications
-        with st.expander("🔔 Notifications", expanded=False):
-            st.write("""
-            ### 1. **View Notifications**
-            - Go to the **Notifications** page to see overdue and upcoming tasks.
-            - Use the filters to customize the notifications (e.g., by project, priority).
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
-            ### 2. **Customize Reminders**
-            - On the **Notifications** page, set the reminder period for upcoming tasks.
+        with st.expander("🔔 Notifications Guide"):
+            st.markdown("""
+            ### Notification System
+            
+            #### Alert Types
+            - **Overdue Tasks**: Highlighted in red with warning icons
+            - **Upcoming Deadlines**: Shown with amber indicators
+            - **Status Changes**: Notifications when tasks are updated
+            
+            #### Management Features
+            - **Custom Reminders**: Set notification preferences
+            - **Filter Options**: View by project or priority
+            - **Quick Actions**: Mark as complete directly from alerts
+            
+            #### Best Practices
+            - Review notifications daily
+            - Set up email reminders for critical tasks
+            - Use the snooze feature for temporary delays
             """)
+            
+            st.image("https://via.placeholder.com/600x300?text=Notifications+Screenshot", 
+                    caption="Notifications Interface", use_container_width=True)
 
-        # Profile
-        with st.expander("👤 Profile", expanded=False):
-            st.write("""
-            ### 1. **Update Your Profile**
-            - Go to the **Profile** page to update your personal information (e.g., email, phone, job title).
-            - Upload a profile picture by clicking **Upload a new profile picture**.
+        # Divider with spacing
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
-            ### 2. **Change Password**
-            - On the **Profile** page, click **Change Password** to update your password.
+        with st.expander("👤 Profile Guide"):
+            st.markdown("""
+            ### Profile Management
+            
+            #### Personal Information
+            - Update your contact details
+            - Upload a profile picture
+            - Change password
+            
+            #### Preferences
+            - Set notification preferences
+            - Choose default views
+            - Configure display settings
+            
+            #### Security
+            - Two-factor authentication
+            - Login history
+            - Connected devices
             """)
+            
+            st.image("https://via.placeholder.com/600x300?text=Profile+Settings+Screenshot", 
+                    caption="Profile Management", use_container_width=True)
 
-        # Admin
+        # Divider with extra spacing before admin section
+        st.markdown("---")
+        st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
+
         if st.session_state.user_role == "Admin":
-            with st.expander("👤 Admin", expanded=False):
-                st.write("""
-                ### 1. **Manage Users**
-                - Go to the **Admin** page to view, add, edit, or delete users.
-                - Assign roles (e.g., User, Admin) to control access to features.
-
-                ### 2. **Manage Projects**
-                - On the **Admin** page, view and manage all projects in the system.
+            with st.expander("👑 Admin Guide", expanded=False):
+                st.markdown("""
+                ### Administrator Tools
+                
+                #### User Management
+                - Create/edit user accounts
+                - Assign roles and permissions
+                - Reset passwords
+                
+                #### System Configuration
+                - Configure application settings
+                - Set up organization defaults
+                - Manage integrations
+                
+                #### Data Administration
+                - Backup and restore data
+                - Audit logs
+                - System health monitoring
                 """)
+                
+                st.image("https://via.placeholder.com/600x300?text=Admin+Panel+Screenshot", 
+                        caption="Admin Dashboard", use_container_width=True)
 
-        # FAQs
-        with st.expander("❓ FAQs", expanded=False):
-            st.write("""
-            ### 1. **How do I reset my password?**
-            - Go to the **Profile** page and click **Change Password**. Enter your current password and set a new one.
+            # Divider with spacing
+            st.markdown("---")
+            st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
-            ### 2. **How do I filter tasks by project?**
-            - On the **Tasks** or **Reports** page, use the project filter in the sidebar to select the project you want to view.
+        # Footer with contact information
+        st.markdown("""
+        <div style="text-align:center;color:#666;font-size:14px;margin-top:50px;">
+            <p>Need additional help? Contact our support team at support@projectapp.com</p>
+            <p>© 2023 Project Management App. All rights reserved.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-            ### 3. **How do I export a report?**
-            - On the **Reports** page, click the **Export** button and select the format (e.g., CSV, Excel).
-            """)
+        # Final divider
+        st.markdown("---")
 
-        # Keyboard Shortcuts
-        with st.expander("⌨️ Keyboard Shortcuts", expanded=False):
-            st.write("""
-            - **Ctrl + S**: Save changes.
-            - **Ctrl + F**: Search for tasks or projects.
-            - **Ctrl + P**: Print the current page.
-            """)
 
-        # Best Practices
-        with st.expander("🌟 Best Practices", expanded=False):
-            st.write("""
-            ### 1. **Organize Your Projects**
-            - Use clear and descriptive names for your projects and tasks.
-            - Set realistic deadlines and priorities.
 
-            ### 2. **Track Your Progress**
-            - Regularly update task statuses and time spent to keep your projects on track.
 
-            ### 3. **Use Filters**
-            - Use filters on the **Tasks**, **Reports**, and **Notifications** pages to focus on specific data.
-            """)
 
+
+
+
+    # Workspace Page
+    elif page == "Workspace":
+            st.markdown("---")
+
+            # Custom CSS for enhanced styling
+            st.markdown("""
+            <style>
+                .doc-header {
+                    background: linear-gradient(135deg, #6e48aa 0%, #9d50bb 100%);
+                    color: white;
+                    padding: 2rem;
+                    border-radius: 10px;
+                    margin-bottom: 2rem;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                }
+                
+            </style>
+            """, unsafe_allow_html=True)
+
+
+            # Header Section with Gradient
+            st.markdown("""
+            <div class="doc-header">
+                <h1 style="color: white; margin-bottom: 0.5rem;">🖥️ Project Workspace</h1>
+                <p style="font-size: 1.1rem; opacity: 0.9;"></p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+
+            
+            workspace_page() 
     
