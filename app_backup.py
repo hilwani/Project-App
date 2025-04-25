@@ -2,11 +2,12 @@ import streamlit as st
 import sqlite3 
 import datetime 
 import time
-import plotly.express as px
+import plotly.express as px 
 import pandas as pd
 from datetime import datetime, timedelta
 import hashlib
-from components.drag_and_drop import drag_and_drop
+import numpy as np
+import statsmodels.api as sm
 from streamlit_calendar import calendar
 from calendar_page import show_calendar_page
 from workspace_page import workspace_page
@@ -2391,65 +2392,317 @@ else:
 
     # Helper function for task priority distribution (Bar Chart)
     def plot_task_priority_distribution(tasks_df):
-        """
-        Create a bar chart showing the distribution of tasks by priority.
-        """
+        """Professional priority distribution visualization with enhanced insights"""
         if tasks_df.empty:
             st.warning("No tasks found for visualization.")
             return
+        
+        # Define professional color scheme
+        priority_colors = {
+            "High": "#E74C3C",  # Vibrant red
+            "Medium": "#F39C12",  # Orange
+            "Low": "#2ECC71"  # Green
+        }
         
         # Count tasks by priority
         priority_counts = tasks_df["Priority"].value_counts().reset_index()
         priority_counts.columns = ["Priority", "Count"]
         
-        # Create bar chart
-        fig = px.bar(
-            priority_counts,
-            x="Priority",
-            y="Count",
-            title="Task Priority Distribution",
-            labels={"Priority": "Task Priority", "Count": "Number of Tasks"},
-            color="Priority",
-            color_discrete_map={
-                "High": "#FF0000",  # Red
-                "Medium": "#FFA500",  # Orange
-                "Low": "#32CD32",  # Green
-            },
-        )
-        st.plotly_chart(fig)
+        # Calculate percentages
+        total_tasks = priority_counts["Count"].sum()
+        priority_counts["Percentage"] = (priority_counts["Count"] / total_tasks * 100).round(1)
+        
+        # Create a 2-column layout for metrics and chart
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            # Display key metrics in cards
+            st.markdown("### Priority Metrics")
+            
+            # Calculate average completion by priority (if status data exists)
+            if "Status" in tasks_df.columns:
+                completion_rates = tasks_df.groupby("Priority")["Status"].apply(
+                    lambda x: (x == "Completed").mean() * 100
+                ).round(1).reset_index()
+                completion_rates.columns = ["Priority", "Completion Rate"]
+                
+                # Merge with counts
+                priority_stats = priority_counts.merge(completion_rates, on="Priority", how="left")
+            else:
+                priority_stats = priority_counts.copy()
+                priority_stats["Completion Rate"] = "N/A"
+            
+            # Display metrics cards
+            for _, row in priority_stats.iterrows():
+                with st.container():
+                    st.markdown(f"""
+                    <div style="
+                        border-left: 4px solid {priority_colors[row['Priority']]};
+                        padding: 12px;
+                        margin-bottom: 12px;
+                        background: #FFFFFF;
+                        border-radius: 4px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    ">
+                        <h4 style="margin:0;color:#2C3E50;">{row['Priority']}</h4>
+                        <p style="margin:4px 0;font-size:0.9rem;">
+                            <strong>Count:</strong> {row['Count']} ({row['Percentage']}%)<br>
+                            <strong>Completion:</strong> {row['Completion Rate'] if row['Completion Rate'] != 'N/A' else 'N/A'}{'%' if row['Completion Rate'] != 'N/A' else ''}
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        with col2:
+            # Create donut chart with Plotly
+            fig = go.Figure()
+            
+            fig.add_trace(go.Pie(
+                labels=priority_counts["Priority"],
+                values=priority_counts["Count"],
+                hole=0.5,
+                marker_colors=[priority_colors[p] for p in priority_counts["Priority"]],
+                textinfo='label+percent',
+                textposition='inside',
+                insidetextorientation='radial',
+                hovertemplate="<b>%{label}</b><br>Count: %{value}<br>%{percent}<extra></extra>",
+                sort=False
+            ))
+            
+            # Update layout for professional appearance
+            fig.update_layout(
+                title='<b>Task Priority Distribution</b>',
+                title_font_size=18,
+                title_x=0.5,
+                showlegend=False,
+                margin=dict(t=50, b=20, l=20, r=20),
+                hoverlabel=dict(
+                    bgcolor="white",
+                    font_size=12,
+                    font_family="Arial"
+                ),
+                annotations=[dict(
+                    text=f"Total<br>{total_tasks}",
+                    x=0.5, y=0.5,
+                    font_size=16,
+                    showarrow=False
+                )]
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Add trend analysis section
+        st.markdown("---")
+        st.markdown("### Priority Trends Over Time")
+        
+        # If date information is available, show trends
+        if 'Planned Start Date' in tasks_df.columns:
+            try:
+                # Convert to datetime and extract month/year
+                tasks_df['Month'] = pd.to_datetime(tasks_df['Planned Start Date']).dt.to_period('M')
+                
+                # Group by month and priority
+                trend_data = tasks_df.groupby(['Month', 'Priority']).size().unstack().fillna(0)
+                
+                # Convert Period index to string for plotting
+                trend_data.index = trend_data.index.astype(str)
+                
+                # Create area chart
+                fig_trend = go.Figure()
+                
+                for priority in ["High", "Medium", "Low"]:
+                    if priority in trend_data.columns:
+                        fig_trend.add_trace(go.Scatter(
+                            x=trend_data.index,
+                            y=trend_data[priority],
+                            name=priority,
+                            stackgroup='one',
+                            mode='lines',
+                            line=dict(width=0.5, color=priority_colors[priority]),
+                            fillcolor=priority_colors[priority],
+                            hovertemplate=f"<b>{priority}</b><br>Month: %{{x}}<br>Tasks: %{{y}}<extra></extra>",
+                            opacity=0.8
+                        ))
+                
+                fig_trend.update_layout(
+                    title='<b>Monthly Priority Distribution</b>',
+                    xaxis_title='Month',
+                    yaxis_title='Number of Tasks',
+                    hovermode="x unified",
+                    plot_bgcolor='rgba(245,245,245,1)',
+                    paper_bgcolor='rgba(255,255,255,1)',
+                    margin=dict(t=50, b=50, l=50, r=50)
+                )
+                
+                st.plotly_chart(fig_trend, use_container_width=True)
+                
+            except Exception as e:
+                st.warning(f"Could not generate trends: {str(e)}")
+        else:
+            st.info("Add date information to tasks to enable priority trend analysis")
+        
+        # Add export options
+        with st.expander("📤 Export Data", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.download_button(
+                    label="Download Priority Data (CSV)",
+                    data=priority_counts.to_csv(index=False),
+                    file_name="task_priority_distribution.csv",
+                    mime="text/csv"
+                )
+            
+            with col2:
+                buf = io.BytesIO()
+                fig.write_image(buf, format="png", width=800)
+                st.download_button(
+                    label="Download Chart (PNG)",
+                    data=buf.getvalue(),
+                    file_name="priority_distribution.png",
+                    mime="image/png"
+                )
 
 
     # Helper function for task progress over time (Line Chart)
+    # Replace the existing plot_task_progress_over_time function with this new version
     def plot_task_progress_over_time(tasks_df):
-        """Create a line chart showing the number of tasks completed over time."""
+        """Enhanced professional visualization of task completion trends over time"""
         if tasks_df.empty:
             st.warning("No tasks found for visualization.")
             return
         
-        # Filter completed tasks
-        completed_tasks = tasks_df[tasks_df["Status"] == "Completed"]
+        # Convert date columns to datetime with error handling
+        tasks_df['Planned Start Date'] = pd.to_datetime(tasks_df['Planned Start Date'], errors='coerce')
+        
+        # Filter out invalid dates and only completed tasks
+        completed_tasks = tasks_df[
+            (tasks_df['Status'] == 'Completed') & 
+            (tasks_df['Planned Start Date'].notna())
+        ].copy()
         
         if completed_tasks.empty:
-            st.warning("No completed tasks found.")
+            st.warning("No completed tasks with valid dates found.")
             return
         
-        # Convert "Planned Start Date" to datetime (using new column name)
-        completed_tasks["Planned Start Date"] = pd.to_datetime(completed_tasks["Planned Start Date"]).dt.date
+        # Group by date and count completed tasks
+        progress_data = completed_tasks.groupby(
+            pd.Grouper(key='Planned Start Date', freq='W-MON')  # Weekly grouping starting Monday
+        ).size().reset_index(name='Completed Tasks')
         
-        # Group by date and count completed tasks (using new column name)
-        progress_data = completed_tasks.groupby("Planned Start Date").size().reset_index(name="Completed Tasks")
+        # Calculate 4-week moving average
+        progress_data['4-Week Avg'] = progress_data['Completed Tasks'].rolling(4).mean()
         
-        # Create line chart
-        fig = px.line(
-            progress_data,
-            x="Planned Start Date",
-            y="Completed Tasks",
-            title="Task Progress Over Time",
-            labels={"Planned Start Date": "Date", "Completed Tasks": "Number of Tasks Completed"},
-            markers=True,
+        # Create figure with secondary y-axis
+        fig = go.Figure()
+        
+        # Add bar chart for weekly completions
+        fig.add_trace(go.Bar(
+            x=progress_data['Planned Start Date'],
+            y=progress_data['Completed Tasks'],
+            name='Weekly Completed',
+            marker_color='#4E8BF5',  # Primary blue
+            opacity=0.7,
+            hovertemplate='<b>Week of %{x|%b %d}</b><br>Tasks: %{y}<extra></extra>'
+        ))
+        
+        # Add line chart for moving average
+        fig.add_trace(go.Scatter(
+            x=progress_data['Planned Start Date'],
+            y=progress_data['4-Week Avg'],
+            name='4-Week Average',
+            line=dict(color='#FFA500', width=3),
+            mode='lines',
+            hovertemplate='<b>4-Week Avg</b>: %{y:.1f} tasks<extra></extra>'
+        ))
+        
+        # Add target line (average completion rate)
+        avg_completion = progress_data['Completed Tasks'].mean()
+        fig.add_hline(
+            y=avg_completion,
+            line_dash="dot",
+            line_color="#32CD32",
+            annotation_text=f"Average: {avg_completion:.1f} tasks/week",
+            annotation_position="top right"
         )
         
-        st.plotly_chart(fig)
+        # Calculate and display key metrics
+        total_completed = completed_tasks.shape[0]
+        completion_rate = (total_completed / tasks_df.shape[0]) * 100 if tasks_df.shape[0] > 0 else 0
+        current_week = datetime.now().isocalendar()[1]
+        current_week_completed = progress_data[progress_data['Planned Start Date'].dt.isocalendar().week == current_week]['Completed Tasks'].sum()
+        
+        # Display metrics in columns
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Completed Tasks", total_completed)
+        with col2:
+            st.metric("Overall Completion Rate", f"{completion_rate:.1f}%")
+        with col3:
+            st.metric("This Week's Completions", current_week_completed if not pd.isna(current_week_completed) else 0)
+        
+        # Update layout for professional appearance
+        fig.update_layout(
+            title='<b>Task Completion Trends</b>',
+            title_font_size=20,
+            xaxis_title='Week Starting',
+            yaxis_title='Tasks Completed',
+            hovermode='x unified',
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            plot_bgcolor='rgba(245,245,245,1)',
+            paper_bgcolor='rgba(255,255,255,1)',
+            margin=dict(l=50, r=50, b=100, t=100, pad=10),
+            xaxis=dict(
+                showgrid=True,
+                gridcolor='rgba(200,200,200,0.2)',
+                tickformat='%b %d<br>%Y'
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor='rgba(200,200,200,0.2)',
+                rangemode='tozero'
+            ),
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=12,
+                font_family="Arial"
+            )
+        )
+        
+        # Display the chart
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Add detailed data table
+        with st.expander("📊 View Detailed Data", expanded=False):
+            # Format dates for display
+            display_df = progress_data.copy()
+            display_df['Week Starting'] = display_df['Planned Start Date'].dt.strftime('%b %d, %Y')
+            display_df = display_df[['Week Starting', 'Completed Tasks', '4-Week Avg']]
+            display_df['4-Week Avg'] = display_df['4-Week Avg'].round(1)
+            
+            st.dataframe(
+                display_df,
+                column_config={
+                    "Week Starting": "Week Starting",
+                    "Completed Tasks": st.column_config.NumberColumn("Tasks Completed", format="%d"),
+                    "4-Week Avg": st.column_config.NumberColumn("4-Week Average", format="%.1f")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # Export options
+            st.download_button(
+                label="📥 Download Data as CSV",
+                data=display_df.to_csv(index=False),
+                file_name="task_completion_trends.csv",
+                mime="text/csv"
+            )
 
 
     # Helper function for upcoming vs overdue tasks (Bar Chart)
@@ -2496,94 +2749,771 @@ else:
 
     # Helper function to track budget tracking visualization
     def plot_budget_tracking(tasks_df):
-        """
-        Create a bar chart showing budget, actual cost, and budget variance for tasks.
-        """
+        """Professional budget tracking dashboard with variance analysis"""
         if tasks_df.empty:
             st.warning("No tasks found for visualization.")
             return
         
-        # Prepare data for the chart
-        budget_data = tasks_df[["Task", "Budget", "Actual Cost", "Budget Variance"]].melt(id_vars="Task", var_name="Category", value_name="Amount")
+        # Check for required columns
+        required_cols = ['Budget', 'Actual Cost', 'Budget Variance', 'Project']
+        if not all(col in tasks_df.columns for col in required_cols):
+            st.error("Missing required budget data columns")
+            return
         
-        # Create bar chart
-        fig = px.bar(
-            budget_data,
-            x="Task",
-            y="Amount",
-            color="Category",
-            title="Budget Tracking",
-            labels={"Task": "Task", "Amount": "Amount ($)", "Category": "Category"},
-            barmode="group",
-        )
-        st.plotly_chart(fig)
+        # Convert currency columns to numeric
+        tasks_df['Budget'] = pd.to_numeric(tasks_df['Budget'], errors='coerce')
+        tasks_df['Actual Cost'] = pd.to_numeric(tasks_df['Actual Cost'], errors='coerce')
+        tasks_df['Budget Variance'] = pd.to_numeric(tasks_df['Budget Variance'], errors='coerce')
+        
+        # Filter out rows with missing budget data
+        budget_data = tasks_df.dropna(subset=['Budget', 'Actual Cost'])
+        
+        if budget_data.empty:
+            st.warning("No valid budget data available")
+            return
+        
+        # Professional color scheme
+        color_under = "#2ECC71"  # Green for under budget
+        color_over = "#E74C3C"   # Red for over budget
+        color_planned = "#3498DB" # Blue for planned
+        
+        # Calculate aggregate metrics
+        total_budget = budget_data['Budget'].sum()
+        total_actual = budget_data['Actual Cost'].sum()
+        total_variance = total_budget - total_actual
+        variance_pct = (total_variance / total_budget * 100) if total_budget > 0 else 0
+        
+        # Create dashboard layout
+        st.markdown("## Budget Performance Dashboard")
+        
+        # Top KPI metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Budget", f"${total_budget:,.2f}")
+        with col2:
+            st.metric("Actual Spend", 
+                    f"${total_actual:,.2f}",
+                    delta=f"{variance_pct:.1f}% {'under' if total_variance >=0 else 'over'} budget",
+                    delta_color="inverse")
+        with col3:
+            st.metric("Variance", 
+                    f"${abs(total_variance):,.2f}",
+                    help="Positive = under budget, Negative = over budget")
+        
+        st.markdown("---")
+        
+        # Main visualization section
+        tab1, tab2, tab3 = st.tabs(["Project Breakdown", "Variance Analysis", "Trend Analysis"])
+        
+        with tab1:
+            # Project-level budget comparison
+            st.markdown("### Budget vs Actual by Project")
+            
+            # Aggregate by project
+            project_data = budget_data.groupby('Project').agg({
+                'Budget': 'sum',
+                'Actual Cost': 'sum'
+            }).reset_index()
+            
+            # Calculate variance and sort
+            project_data['Variance'] = project_data['Budget'] - project_data['Actual Cost']
+            project_data['Variance Pct'] = (project_data['Variance'] / project_data['Budget'] * 100)
+            project_data = project_data.sort_values('Budget', ascending=False)
+            
+            # Create waterfall chart
+            fig = go.Figure()
+            
+            # Add budget bars
+            fig.add_trace(go.Bar(
+                x=project_data['Project'],
+                y=project_data['Budget'],
+                name='Planned Budget',
+                marker_color=color_planned,
+                opacity=0.7,
+                hovertemplate="<b>%{x}</b><br>Budget: $%{y:,.2f}<extra></extra>"
+            ))
+            
+            # Add actual cost bars
+            fig.add_trace(go.Bar(
+                x=project_data['Project'],
+                y=project_data['Actual Cost'],
+                name='Actual Cost',
+                marker_color=np.where(project_data['Variance'] >= 0, color_under, color_over),
+                hovertemplate="<b>%{x}</b><br>Actual: $%{y:,.2f}<br>Variance: $%{text:,.2f}<extra></extra>",
+                text=project_data['Variance']
+            ))
+            
+            # Add variance indicators
+            for i, row in project_data.iterrows():
+                fig.add_shape(
+                    type="line",
+                    x0=i-0.4, x1=i+0.4,
+                    y0=row['Budget'], y1=row['Budget'],
+                    line=dict(color="#7F8C8D", width=2, dash="dot"),
+                    opacity=0.5
+                )
+            
+            # Update layout
+            fig.update_layout(
+                barmode='group',
+                plot_bgcolor='rgba(245,245,245,1)',
+                paper_bgcolor='rgba(255,255,255,1)',
+                hovermode="x unified",
+                xaxis_title="Project",
+                yaxis_title="Amount ($)",
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                ),
+                margin=dict(t=50, b=100, l=50, r=50),
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Project variance table
+            with st.expander("View Detailed Project Data", expanded=False):
+                display_df = project_data.copy()
+                display_df['Budget'] = display_df['Budget'].apply(lambda x: f"${x:,.2f}")
+                display_df['Actual Cost'] = display_df['Actual Cost'].apply(lambda x: f"${x:,.2f}")
+                display_df['Variance'] = display_df['Variance'].apply(lambda x: f"${x:,.2f}")
+                display_df['Variance Pct'] = display_df['Variance Pct'].apply(lambda x: f"{x:.1f}%")
+                
+                st.dataframe(
+                    display_df,
+                    column_config={
+                        "Project": "Project",
+                        "Budget": st.column_config.NumberColumn("Budget", format="$%.2f"),
+                        "Actual Cost": st.column_config.NumberColumn("Actual Cost", format="$%.2f"),
+                        "Variance": st.column_config.NumberColumn("Variance", format="$%.2f"),
+                        "Variance Pct": "Variance %"
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+        
+        with tab2:
+            # Variance analysis
+            st.markdown("### Budget Variance Analysis")
+            
+            # Create scatter plot of variance vs budget
+            fig = px.scatter(
+                project_data,
+                x='Budget',
+                y='Variance Pct',
+                color='Variance',
+                color_continuous_scale=[color_over, color_under],
+                size='Budget',
+                hover_name='Project',
+                labels={
+                    'Budget': 'Project Budget ($)',
+                    'Variance Pct': 'Variance Percentage',
+                    'Variance': 'Variance ($)'
+                },
+                trendline="lowess",
+                trendline_color_override="#7F8C8D"
+            )
+            
+            # Add reference lines
+            fig.update_layout(
+                shapes=[
+                    # Zero variance line
+                    dict(
+                        type="line",
+                        x0=0, x1=project_data['Budget'].max()*1.1,
+                        y0=0, y1=0,
+                        line=dict(color="#7F8C8D", width=2)
+                    ),
+                    # 10% variance threshold
+                    dict(
+                        type="line",
+                        x0=0, x1=project_data['Budget'].max()*1.1,
+                        y0=10, y1=10,
+                        line=dict(color="#E74C3C", width=1, dash="dot")
+                    ),
+                    dict(
+                        type="line",
+                        x0=0, x1=project_data['Budget'].max()*1.1,
+                        y0=-10, y1=-10,
+                        line=dict(color="#E74C3C", width=1, dash="dot")
+                    )
+                ],
+                annotations=[
+                    dict(
+                        x=project_data['Budget'].max()*0.8,
+                        y=11,
+                        text="10% Variance Threshold",
+                        showarrow=False,
+                        font=dict(color="#E74C3C")
+                    )
+                ],
+                plot_bgcolor='rgba(245,245,245,1)',
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Variance insights
+            over_budget = project_data[project_data['Variance'] < 0]
+            under_budget = project_data[project_data['Variance'] > 0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### Over Budget Projects")
+                if not over_budget.empty:
+                    over_budget = over_budget.sort_values('Variance Pct')
+                    for _, row in over_budget.iterrows():
+                        st.metric(
+                            row['Project'],
+                            f"${abs(row['Variance']):,.2f}",
+                            delta=f"{row['Variance Pct']:.1f}% over",
+                            delta_color="inverse"
+                        )
+                else:
+                    st.success("No projects over budget")
+            
+            with col2:
+                st.markdown("#### Under Budget Projects")
+                if not under_budget.empty:
+                    under_budget = under_budget.sort_values('Variance Pct', ascending=False)
+                    for _, row in under_budget.iterrows():
+                        st.metric(
+                            row['Project'],
+                            f"${row['Variance']:,.2f}",
+                            delta=f"{row['Variance Pct']:.1f}% under"
+                        )
+                else:
+                    st.info("No projects under budget")
+        
+        with tab3:
+            # Time-based trend analysis (if date available)
+            if 'Planned Start Date' in budget_data.columns:
+                try:
+                    st.markdown("### Budget Performance Over Time")
+                    
+                    # Extract month/year from dates
+                    budget_data['Month'] = pd.to_datetime(budget_data['Planned Start Date']).dt.to_period('M')
+                    
+                    # Group by month
+                    trend_data = budget_data.groupby('Month').agg({
+                        'Budget': 'sum',
+                        'Actual Cost': 'sum'
+                    }).reset_index()
+                    trend_data['Month'] = trend_data['Month'].astype(str)
+                    trend_data['Variance'] = trend_data['Budget'] - trend_data['Actual Cost']
+                    
+                    # Create time series chart
+                    fig = go.Figure()
+                    
+                    fig.add_trace(go.Scatter(
+                        x=trend_data['Month'],
+                        y=trend_data['Budget'],
+                        name='Planned Budget',
+                        line=dict(color=color_planned, width=3),
+                        mode='lines+markers',
+                        hovertemplate="<b>%{x}</b><br>Budget: $%{y:,.2f}<extra></extra>"
+                    ))
+                    
+                    fig.add_trace(go.Scatter(
+                        x=trend_data['Month'],
+                        y=trend_data['Actual Cost'],
+                        name='Actual Cost',
+                        line=dict(color=color_over, width=3),
+                        mode='lines+markers',
+                        hovertemplate="<b>%{x}</b><br>Actual: $%{y:,.2f}<br>Variance: $%{text:,.2f}<extra></extra>",
+                        text=trend_data['Variance']
+                    ))
+                    
+                    # Add variance area
+                    fig.add_trace(go.Scatter(
+                        x=trend_data['Month'],
+                        y=trend_data['Budget'],
+                        fill='tonexty',
+                        fillcolor='rgba(46, 204, 113, 0.2)',
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+                    
+                    fig.update_layout(
+                        plot_bgcolor='rgba(245,245,245,1)',
+                        xaxis_title="Month",
+                        yaxis_title="Amount ($)",
+                        hovermode="x unified",
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Monthly variance table
+                    with st.expander("View Monthly Variance Data", expanded=False):
+                        display_df = trend_data.copy()
+                        display_df['Budget'] = display_df['Budget'].apply(lambda x: f"${x:,.2f}")
+                        display_df['Actual Cost'] = display_df['Actual Cost'].apply(lambda x: f"${x:,.2f}")
+                        display_df['Variance'] = display_df['Variance'].apply(lambda x: f"${x:,.2f}")
+                        
+                        st.dataframe(
+                            display_df,
+                            column_config={
+                                "Month": "Month",
+                                "Budget": st.column_config.NumberColumn("Budget", format="$%.2f"),
+                                "Actual Cost": st.column_config.NumberColumn("Actual Cost", format="$%.2f"),
+                                "Variance": st.column_config.NumberColumn("Variance", format="$%.2f")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                
+                except Exception as e:
+                    st.warning(f"Could not generate trend analysis: {str(e)}")
+            else:
+                st.info("Date information not available for trend analysis")
+        
+        # Export options
+        st.markdown("---")
+        with st.expander("📤 Export Budget Data", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.download_button(
+                    label="Download Project Budget Data (CSV)",
+                    data=project_data.to_csv(index=False),
+                    file_name="project_budget_data.csv",
+                    mime="text/csv"
+                )
+            
+            with col2:
+                if 'fig' in locals():
+                    buf = io.BytesIO()
+                    fig.write_image(buf, format="png", width=1000)
+                    st.download_button(
+                        label="Download Budget Chart (PNG)",
+                        data=buf.getvalue(),
+                        file_name="budget_analysis.png",
+                        mime="image/png"
+                    )
 
 
     # Helper function to visualize task timeline (Gantt chart)
     def plot_task_timeline(tasks_df):
+        """Enhanced professional timeline visualization for tasks"""
         if tasks_df.empty:
             st.warning("No tasks found for visualization.")
             return
         
-        # Prepare data for Gantt chart - use the new column names
+        # Prepare data
         timeline_df = tasks_df.copy()
-        timeline_df['Start'] = pd.to_datetime(tasks_df['Planned Start Date'])
-        timeline_df['End'] = pd.to_datetime(tasks_df['Planned Deadline'])
-        timeline_df['Completion'] = (timeline_df['Status'] == 'Completed').astype(int)
         
-        # Add actual dates if they exist
-        if 'Actual Start Date' in tasks_df.columns:
-            timeline_df['Actual Start'] = pd.to_datetime(tasks_df['Actual Start Date'])
-        if 'Actual Deadline' in tasks_df.columns:
-            timeline_df['Actual End'] = pd.to_datetime(tasks_df['Actual Deadline'])
+        # Convert date columns to datetime, coercing errors to NaT
+        timeline_df['Planned Start Date'] = pd.to_datetime(timeline_df['Planned Start Date'], errors='coerce')
+        timeline_df['Planned Deadline'] = pd.to_datetime(timeline_df['Planned Deadline'], errors='coerce')
         
-        fig = px.timeline(
-            timeline_df,
-            x_start="Start",
-            x_end="End",
-            y="Task",
-            color="Status",
-            color_discrete_map=status_colors,
-            title="Task Timeline with Completion Status",
-            hover_data=["Priority", "Assignee", "Project Owner"]
+        # Filter out tasks with invalid/missing planned dates
+        timeline_df = timeline_df.dropna(subset=['Planned Start Date', 'Planned Deadline'])
+        
+        if timeline_df.empty:
+            st.warning("No valid tasks with complete date information found.")
+            return
+        
+        # Calculate duration in milliseconds for Plotly
+        timeline_df['Planned Duration'] = (
+            timeline_df['Planned Deadline'] - timeline_df['Planned Start Date']
+        ).dt.total_seconds() * 1000  # Convert to milliseconds
+        
+        # Handle actual dates if available
+        has_actual_dates = False
+        if 'Actual Start Date' in timeline_df.columns and 'Actual Deadline' in timeline_df.columns:
+            timeline_df['Actual Start Date'] = pd.to_datetime(timeline_df['Actual Start Date'], errors='coerce')
+            timeline_df['Actual Deadline'] = pd.to_datetime(timeline_df['Actual Deadline'], errors='coerce')
+            
+            # Only consider actual dates if both are present
+            actual_dates_mask = timeline_df['Actual Start Date'].notna() & timeline_df['Actual Deadline'].notna()
+            if actual_dates_mask.any():
+                has_actual_dates = True
+                timeline_df.loc[actual_dates_mask, 'Actual Duration'] = (
+                    timeline_df.loc[actual_dates_mask, 'Actual Deadline'] - 
+                    timeline_df.loc[actual_dates_mask, 'Actual Start Date']
+                ).dt.total_seconds() * 1000  # Convert to milliseconds
+        
+        # Helper function to safely format dates
+        def safe_strftime(date, default="Not set"):
+            if pd.isna(date):
+                return default
+            try:
+                return date.strftime('%b %d, %Y')
+            except:
+                return default
+        
+        # Create custom hover text with safe numeric conversion
+        def create_hover_text(row):
+            base_text = (
+                f"<b>{row['Task']}</b><br>"
+                f"<b>Project:</b> {row['Project']}<br>"
+                f"<b>Status:</b> {row['Status']}<br>"
+                f"<b>Priority:</b> {row['Priority']}<br>"
+                f"<b>Assignee:</b> {row['Assignee']}<br>"
+                f"<b>Planned:</b> {safe_strftime(row['Planned Start Date'])} - {safe_strftime(row['Planned Deadline'])}<br>"
+                f"<b>Duration:</b> {(float(row['Planned Duration']) / (1000 * 60 * 60 * 24)):.1f} days"
+            )
+            
+            if has_actual_dates and 'Actual Duration' in row:
+                try:
+                    actual_duration = float(row['Actual Duration'])
+                    actual_text = (
+                        f"<br><b>Actual:</b> {safe_strftime(row['Actual Start Date'])} - {safe_strftime(row['Actual Deadline'])}<br>"
+                        f"<b>Actual Duration:</b> {(actual_duration / (1000 * 60 * 60 * 24)):.1f} days"
+                    )
+                except (ValueError, TypeError):
+                    actual_text = "<br><b>Actual Duration:</b> Invalid data"
+                return base_text + actual_text
+            return base_text
+        
+        timeline_df['Hover Text'] = timeline_df.apply(create_hover_text, axis=1)
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add planned timeline bars
+        fig.add_trace(go.Bar(
+            y=timeline_df['Task'],
+            x=timeline_df['Planned Duration'].astype(float),  # Ensure numeric
+            base=timeline_df['Planned Start Date'].astype('int64') // 10**6,  # Convert to milliseconds
+            orientation='h',
+            name='Planned',
+            marker_color='rgba(78, 139, 245, 0.6)',  # Semi-transparent blue
+            marker_line_color='rgba(78, 139, 245, 1.0)',
+            marker_line_width=1,
+            hoverinfo='text',
+            hovertext=timeline_df['Hover Text'],
+            customdata=timeline_df[['Status', 'Priority']]
+        ))
+        
+        # Add actual timeline bars if available
+        if has_actual_dates:
+            fig.add_trace(go.Bar(
+                y=timeline_df.loc[actual_dates_mask, 'Task'],
+                x=timeline_df.loc[actual_dates_mask, 'Actual Duration'].astype(float),  # Ensure numeric
+                base=timeline_df.loc[actual_dates_mask, 'Actual Start Date'].astype('int64') // 10**6,  # Convert to milliseconds
+                orientation='h',
+                name='Actual',
+                marker_color='rgba(50, 205, 50, 0.6)',  # Semi-transparent green
+                marker_line_color='rgba(50, 205, 50, 1.0)',
+                marker_line_width=1,
+                hoverinfo='text',
+                hovertext=timeline_df.loc[actual_dates_mask, 'Hover Text']
+            ))
+        
+        # Add today's line - convert datetime to milliseconds since epoch
+        today = datetime.now()
+        today_ms = today.timestamp() * 1000  # Convert to milliseconds
+        
+        fig.add_vline(
+            x=today_ms,
+            line_width=2,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Today: {today.strftime('%b %d, %Y')}",
+            annotation_position="top right",
+            annotation_font_size=12,
+            annotation_font_color="red"
         )
         
-        # Add actual dates to hover data if they exist
-        if 'Actual Start' in timeline_df.columns and 'Actual End' in timeline_df.columns:
-            fig.update_traces(
-                customdata=timeline_df[['Actual Start', 'Actual End']],
-                hovertemplate=(
-                    "<b>%{y}</b><br>" +
-                    "Planned: %{x|%b %d, %Y} - %{x_end|%b %d, %Y}<br>" +
-                    "Actual: %{customdata[0]|%b %d, %Y} - %{customdata[1]|%b %d, %Y}<br>" +
-                    "Status: %{marker.color}<br>" +
-                    "Priority: %{customdata[2]}<br>" +
-                    "Project: %{customdata[3]}<extra></extra>"
-                )
+        # Update layout for professional appearance
+        fig.update_layout(
+            title='<b>Task Timeline Comparison</b>',
+            title_font_size=20,
+            title_x=0.05,
+            title_y=0.95,
+            barmode='overlay',
+            height=max(600, len(timeline_df) * 30),  # Dynamic height based on number of tasks
+            hovermode='closest',
+            xaxis_title='Timeline',
+            yaxis_title='Tasks',
+            yaxis=dict(
+                autorange=True,
+                showgrid=True,
+                zeroline=True,
+                gridcolor='rgba(0, 0, 0, 0.05)'
+            ),
+            xaxis=dict(
+                type='date',  # Tell Plotly this is a date axis
+                showgrid=True,
+                zeroline=True,
+                gridcolor='rgba(0, 0, 0, 0.05)',
+                tickformat='%b %d, %Y'  # Format dates nicely
+            ),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            margin=dict(l=100, r=50, b=100, t=100, pad=10),
+            plot_bgcolor='rgba(255, 255, 255, 0.9)',
+            paper_bgcolor='rgba(255, 255, 255, 0.9)',
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=12,
+                font_family="Arial"
             )
+        )
         
-        fig.update_yaxes(autorange="reversed")
+        # Add status-based color coding
+        for status, color in status_colors.items():
+            status_tasks = timeline_df[timeline_df['Status'] == status]
+            if not status_tasks.empty:
+                fig.add_trace(go.Scatter(
+                    x=[None],  # These won't be visible
+                    y=[None],
+                    mode='markers',
+                    marker=dict(size=10, color=color),
+                    name=status,
+                    hoverinfo='none',
+                    showlegend=True
+                ))
+        
+        # Display the figure
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Add download button
+        with st.expander("📥 Export Options", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="Download Data as CSV",
+                    data=timeline_df.to_csv(index=False),
+                    file_name="task_timeline_data.csv",
+                    mime="text/csv"
+                )
+            with col2:
+                st.download_button(
+                    label="Download Chart as PNG",
+                    data=fig.to_image(format="png"),
+                    file_name="task_timeline.png",
+                    mime="image/png"
+                )
 
 
     #helper function to visualize assignee workload (Sunburst chart)
     def plot_assignee_workload(tasks_df):
+        """Professional workload visualization with capacity analysis"""
         if tasks_df.empty:
             st.warning("No tasks found for visualization.")
             return
         
-        # Prepare hierarchical data
-        workload_df = tasks_df.groupby(['Assignee', 'Status']).size().reset_index(name='Count')
+        # Professional color palette
+        status_colors = {
+            "Completed": "#2ECC71",  # Green
+            "In Progress": "#3498DB",  # Blue
+            "Pending": "#F39C12",  # Orange
+            "Overdue": "#E74C3C"  # Red
+        }
         
-        fig = px.sunburst(
-            workload_df,
-            path=['Assignee', 'Status'],
-            values='Count',
-            color='Status',
-            color_discrete_map=status_colors,
-            title="Assignee Workload by Task Status"
+        # Ensure we have required columns
+        if "Assignee" not in tasks_df.columns or "Status" not in tasks_df.columns:
+            st.error("Assignee or Status data missing")
+            return
+        
+        # Calculate workload metrics
+        workload_data = tasks_df.groupby(['Assignee', 'Status']).size().unstack().fillna(0)
+        
+        # Calculate totals and percentages
+        workload_data['Total Tasks'] = workload_data.sum(axis=1)
+        workload_data = workload_data.sort_values('Total Tasks', ascending=False)
+        
+        # Convert to long format for visualization
+        workload_long = workload_data.drop(columns=['Total Tasks']).reset_index().melt(
+            id_vars='Assignee', 
+            var_name='Status', 
+            value_name='Count'
         )
-        st.plotly_chart(fig, use_container_width=True)
+        
+        # Create a 2-column layout
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            # Workload metrics summary
+            st.markdown("### Workload Summary")
+            
+            # Calculate capacity metrics
+            avg_tasks = workload_data['Total Tasks'].mean()
+            max_tasks = workload_data['Total Tasks'].max()
+            min_tasks = workload_data['Total Tasks'].min()
+            
+            st.metric("Average Tasks per Assignee", round(avg_tasks, 1))
+            st.metric("Most Loaded Assignee", 
+                    f"{workload_data['Total Tasks'].idxmax()} ({max_tasks})",
+                    help="Assignee with highest task count")
+            st.metric("Least Loaded Assignee", 
+                    f"{workload_data['Total Tasks'].idxmin()} ({min_tasks})",
+                    help="Assignee with lowest task count")
+            
+            # Workload distribution stats
+            st.markdown("#### Distribution")
+            st.write(f"**Std Dev:** {workload_data['Total Tasks'].std():.1f}")
+            st.write(f"**25th Percentile:** {workload_data['Total Tasks'].quantile(0.25):.1f}")
+            st.write(f"**75th Percentile:** {workload_data['Total Tasks'].quantile(0.75):.1f}")
+            
+            # Export raw data
+            with st.expander("📤 Export Data", expanded=False):
+                st.download_button(
+                    label="Download Workload Data",
+                    data=workload_data.reset_index().to_csv(index=False),
+                    file_name="workload_analysis.csv",
+                    mime="text/csv"
+                )
+        
+        with col2:
+            # Interactive stacked bar chart
+            fig = px.bar(
+                workload_long,
+                x='Assignee',
+                y='Count',
+                color='Status',
+                color_discrete_map=status_colors,
+                title='<b>Task Distribution by Assignee</b>',
+                labels={'Count': 'Number of Tasks'},
+                hover_data=['Status', 'Count'],
+                category_orders={"Status": ["Completed", "In Progress", "Pending", "Overdue"]}
+            )
+            
+            # Add reference line for average workload
+            fig.add_hline(
+                y=avg_tasks,
+                line_dash="dot",
+                line_color="#7F8C8D",
+                annotation_text=f"Average: {avg_tasks:.1f}",
+                annotation_position="top right"
+            )
+            
+            # Professional styling
+            fig.update_layout(
+                plot_bgcolor='rgba(245,245,245,1)',
+                paper_bgcolor='rgba(255,255,255,1)',
+                margin=dict(t=50, b=100, l=50, r=50),
+                hovermode="x unified",
+                xaxis_title=None,
+                yaxis_title="Number of Tasks",
+                legend_title="Task Status",
+                uniformtext_minsize=8,
+                uniformtext_mode='hide',
+                bargap=0.2,
+                height=600
+            )
+            
+            # Rotate x-axis labels for better readability
+            fig.update_xaxes(tickangle=45)
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Workload balance analysis
+        st.markdown("---")
+        st.markdown("### Workload Balance Analysis")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Workload distribution pie chart
+            fig_pie = px.pie(
+                workload_data.reset_index(),
+                names='Assignee',
+                values='Total Tasks',
+                title='<b>Workload Distribution</b>',
+                hover_data=['Total Tasks'],
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            
+            fig_pie.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                hovertemplate="<b>%{label}</b><br>%{value} tasks (%{percent})<extra></extra>"
+            )
+            
+            fig_pie.update_layout(
+                showlegend=False,
+                margin=dict(t=50, b=50, l=50, r=50),
+                height=400
+            )
+            
+            st.plotly_chart(fig_pie, use_container_width=True)
+        
+        with col2:
+            # Completion rate analysis
+            if "Status" in tasks_df.columns:
+                completion_rates = tasks_df.groupby('Assignee')['Status'].apply(
+                    lambda x: (x == 'Completed').mean() * 100
+                ).reset_index(name='Completion Rate')
+                
+                fig_completion = px.bar(
+                    completion_rates.sort_values('Completion Rate'),
+                    x='Completion Rate',
+                    y='Assignee',
+                    orientation='h',
+                    title='<b>Completion Rates by Assignee</b>',
+                    labels={'Completion Rate': 'Completion Rate (%)'},
+                    color='Completion Rate',
+                    color_continuous_scale='Blues'
+                )
+                
+                fig_completion.update_layout(
+                    plot_bgcolor='rgba(245,245,245,1)',
+                    yaxis_title=None,
+                    xaxis_title="Completion Rate (%)",
+                    height=400,
+                    margin=dict(t=50, b=50, l=50, r=50)
+                )
+                
+                st.plotly_chart(fig_completion, use_container_width=True)
+            else:
+                st.warning("Status data not available for completion analysis")
+        
+        # Capacity planning section
+        st.markdown("---")
+        st.markdown("### Capacity Planning Insights")
+        
+        # Calculate workload balance score (Gini coefficient)
+        def gini_coefficient(x):
+            x = sorted(x)
+            n = len(x)
+            s = sum(x)
+            if s == 0:
+                return 0
+            r = range(1, n+1)
+            num = 2 * sum(i*j for i,j in zip(r, x))
+            den = n * sum(x)
+            return (num / den) - (n + 1) / n
+        
+        gini = gini_coefficient(workload_data['Total Tasks'])
+        
+        cols = st.columns(3)
+        with cols[0]:
+            st.metric("Workload Balance Score", 
+                    f"{gini:.2f}",
+                    help="0 = perfect balance, 1 = maximum imbalance")
+        with cols[1]:
+            overload_threshold = avg_tasks * 1.5
+            overloaded = sum(workload_data['Total Tasks'] > overload_threshold)
+            st.metric("Overloaded Assignees", 
+                    f"{overloaded}",
+                    help=f"> {overload_threshold:.1f} tasks (1.5x avg)")
+        with cols[2]:
+            underload_threshold = avg_tasks * 0.5
+            underloaded = sum(workload_data['Total Tasks'] < underload_threshold)
+            st.metric("Underloaded Assignees", 
+                    f"{underloaded}",
+                    help=f"< {underload_threshold:.1f} tasks (0.5x avg)")
+        
+        # Recommendations
+        if gini > 0.3:
+            st.warning("⚠️ Significant workload imbalance detected. Consider redistributing tasks.")
+        elif gini > 0.15:
+            st.info("ℹ️ Moderate workload imbalance. Monitor for potential bottlenecks.")
+        else:
+            st.success("✓ Workload is well balanced across team members")
 
 
     # Helper function to visualize budget variance (Waterfall chart)
@@ -2738,7 +3668,7 @@ else:
                     st.plotly_chart(fig, use_container_width=True)
     
 
-
+ 
     
      # Dashboard Page 
     if page == "Dashboard":
