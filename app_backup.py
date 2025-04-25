@@ -2,7 +2,7 @@ import streamlit as st
 import sqlite3 
 import datetime 
 import time
-import plotly.express as px 
+import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 import hashlib
@@ -240,6 +240,19 @@ custom_css = f"""
         .stColumns {{
             flex-direction: column;
         }}
+
+    /* NEW TIMELINE VISUALIZATION STYLES */
+    .stPlotlyChart {{
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px;
+        background: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }}
+    .stDownloadButton>button {{
+        width: 100% !important;
+    }}
+
     }}
 </style>
 """
@@ -1607,7 +1620,7 @@ def edit_task_form(task_id, project_id=None):
             actual_time = st.number_input(
                 "Actual Time Spent (Hours)",
                 min_value=0.0,
-                value=float(task[16]) if len(task) > 16 and task[16] is not None and str(task[16]).replace('.', '', 1).isdigit() else 0.0,
+                value=float(task[17]) if len(task) > 17 and task[17] is not None and str(task[17]).replace('.', '', 1).isdigit() else 0.0,
                 step=0.5
             )
 
@@ -2780,7 +2793,7 @@ else:
         # Calculate aggregate metrics
         total_budget = budget_data['Budget'].sum()
         total_actual = budget_data['Actual Cost'].sum()
-        total_variance = total_budget - total_actual
+        total_variance =total_budget - total_actual
         variance_pct = (total_variance / total_budget * 100) if total_budget > 0 else 0
         
         # Create dashboard layout
@@ -2816,7 +2829,7 @@ else:
             }).reset_index()
             
             # Calculate variance and sort
-            project_data['Variance'] = project_data['Budget'] - project_data['Actual Cost']
+            project_data['Variance'] = (project_data['Budget'] - project_data['Actual Cost']).round(2)
             project_data['Variance Pct'] = (project_data['Variance'] / project_data['Budget'] * 100)
             project_data = project_data.sort_values('Budget', ascending=False)
             
@@ -5077,13 +5090,7 @@ else:
                             if 'editing_task_id' in st.session_state and st.session_state.editing_task_id == task_id:
                                 task_id = st.session_state.editing_task_id
                                 project_id = st.session_state.editing_task_project
-                                
-                                # # Check edit permissions
-                                # is_admin = st.session_state.user_role == "Admin"
-                                # is_project_owner = query_db(
-                                #     "SELECT user_id FROM projects WHERE id=?", 
-                                #     (project_id,), one=True
-                                # )[0] == st.session_state.user_id
+
 
                                 # New fixed code
                                 project_owner = query_db(
@@ -5161,7 +5168,27 @@ else:
         
         
         with tab1:
-            plot_task_timeline(tasks_df)
+
+            # In the Tasks page section, before calling plot_task_timeline()
+            st.markdown("""
+            <style>
+                .stPlotlyChart {
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    padding: 10px;
+                    background: white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                }
+                .stDownloadButton>button {
+                    width: 100% !important;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+
+            plot_task_timeline(tasks_df)  # Existing visualization call
+
+
+            # plot_task_timeline(tasks_df)
         
         with tab2:
             plot_task_progress_over_time(tasks_df)
@@ -5703,79 +5730,6 @@ else:
             )
 
 
-        # Consider adding a refresh button to reload user data:
-
-        if st.button("🔄 Refresh Data"):
-            st.rerun()
-
-        # Add export functionality for the user data:
-        with st.expander("📤 Export User Logging Data"):
-            csv = users_df.to_csv(index=False)
-            st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name="user_logging_data.csv",
-            mime="text/csv"
-        )
-
-        
-        # ======= Summary Statistics ======= 
-        st.markdown("---")
-        st.subheader("📊 Project Overview")
-        
-
-        # Calculate metrics
-        total_users = len(query_db("SELECT * FROM users"))
-        total_projects = len(query_db("SELECT * FROM projects"))
-        active_projects = len(query_db("SELECT * FROM projects WHERE end_date >= ?", (datetime.today().date(),)))
-        overdue_projects = len(query_db("""
-            SELECT p.id 
-            FROM projects p
-            WHERE p.end_date < ? 
-            AND EXISTS (
-                SELECT 1 FROM tasks t 
-                WHERE t.project_id = p.id 
-                AND t.status != 'Completed'
-            )
-        """, (datetime.today().date(),)))
-        completed_projects = len(query_db("""
-            SELECT p.id 
-            FROM projects p
-            WHERE NOT EXISTS (
-                SELECT 1 FROM tasks t 
-                WHERE t.project_id = p.id 
-                AND t.status != 'Completed'
-            )
-        """))
-        
-        # Create metric cards with the same style as Dashboard
-        metric_cards = [
-            {"title": "Completed Projects", "value": completed_projects, "color": "#07f7f7", "icon": "✅"},
-            {"title": "Total Projects", "value": total_projects, "color": "#6BB9F0", "icon": "📂"},
-            {"title": "Active Projects", "value": active_projects, "color": "#32CD32", "icon": "🟢"},
-            {"title": "Overdue Projects", "value": overdue_projects, "color": "#FF4500", "icon": "⚠️"}
-        ]
-
-        # Display metrics in columns with consistent styling
-        cols = st.columns(4)
-        for i, card in enumerate(metric_cards):
-            with cols[i]:
-                st.markdown(f"""
-                <div style='
-                    background-color: #FFFFFF;
-                    border-radius: 10px;
-                    padding: 1.2rem;
-                    border-left: 4px solid {card['color']};
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                    height: 100%;
-                '>
-                    <div style='display: flex; align-items: center; margin-bottom: 8px;'>
-                        <span style='font-size: 1.5rem; margin-right: 8px;'>{card['icon']}</span>
-                        <span style='font-size: 0.9rem; color: #666;'>{card['title']}</span>
-                    </div>
-                    <p style='font-size: 1.8rem; font-weight: 700; color: #2c3e50; margin: 0;'>{card['value']}</p>
-                </div>
-                """, unsafe_allow_html=True)
 
         
         # Divider with spacing
@@ -5785,8 +5739,12 @@ else:
 
         # ======= User Management Section ======= 
         st.subheader("👥 User Management")
-
+        # st.markdown("---")
+        
         # Add New User Form
+        st.markdown("---")
+        st.subheader("➕ Add New User")
+
         with st.expander("➕ Add New User", expanded=False):
             with st.form("add_user_form"):
                 col1, col2 = st.columns(2)
@@ -5829,9 +5787,17 @@ else:
                         st.success("User added successfully!")
                         st.rerun()
 
-            
+
+
+        # Divider with spacing
+        # st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)  
+
         
         # ======= Filtered User Table =======
+        st.markdown("---")
+        st.subheader("👥Edit User")
+
         # Fetch all users
         users = query_db("SELECT id, username, role, email, phone, first_name, last_name, company, job_title, department FROM users")
 
@@ -6068,9 +6034,74 @@ else:
         # ======= Project Management Section =======
         st.subheader("📂 Project Management")
 
+        # ======= Summary Statistics ======= 
+        st.markdown("---")
+        st.subheader("📊 Project Overview")
         
-        # In the Projects page section, update the projects_data query to include actual dates:
-        # In your Projects page section (where the analytics table is displayed)
+
+        # Calculate metrics
+        total_users = len(query_db("SELECT * FROM users"))
+        total_projects = len(query_db("SELECT * FROM projects"))
+        active_projects = len(query_db("SELECT * FROM projects WHERE end_date >= ?", (datetime.today().date(),)))
+        overdue_projects = len(query_db("""
+            SELECT p.id 
+            FROM projects p
+            WHERE p.end_date < ? 
+            AND EXISTS (
+                SELECT 1 FROM tasks t 
+                WHERE t.project_id = p.id 
+                AND t.status != 'Completed'
+            )
+        """, (datetime.today().date(),)))
+        completed_projects = len(query_db("""
+            SELECT p.id 
+            FROM projects p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM tasks t 
+                WHERE t.project_id = p.id 
+                AND t.status != 'Completed'
+            )
+        """))
+        
+        # Create metric cards with the same style as Dashboard
+        metric_cards = [
+            {"title": "Completed Projects", "value": completed_projects, "color": "#07f7f7", "icon": "✅"},
+            {"title": "Total Projects", "value": total_projects, "color": "#6BB9F0", "icon": "📂"},
+            {"title": "Active Projects", "value": active_projects, "color": "#32CD32", "icon": "🟢"},
+            {"title": "Overdue Projects", "value": overdue_projects, "color": "#FF4500", "icon": "⚠️"}
+        ]
+
+        # Display metrics in columns with consistent styling
+        cols = st.columns(4)
+        for i, card in enumerate(metric_cards):
+            with cols[i]:
+                st.markdown(f"""
+                <div style='
+                    background-color: #FFFFFF;
+                    border-radius: 10px;
+                    padding: 1.2rem;
+                    border-left: 4px solid {card['color']};
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    height: 100%;
+                '>
+                    <div style='display: flex; align-items: center; margin-bottom: 8px;'>
+                        <span style='font-size: 1.5rem; margin-right: 8px;'>{card['icon']}</span>
+                        <span style='font-size: 0.9rem; color: #666;'>{card['title']}</span>
+                    </div>
+                    <p style='font-size: 1.8rem; font-weight: 700; color: #2c3e50; margin: 0;'>{card['value']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+        
+        # Divider with spacing
+        # st.markdown("---")
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+
+
+
+        # ======= Summary Statistics ======= 
+        st.markdown("---")
+        st.subheader("🔍 Filter Projects")
 
         # First, fetch all project data with proper status calculations
         projects_data = query_db("""
@@ -6265,13 +6296,15 @@ else:
         )
 
         # Divider with spacing
-        st.markdown("---")
-        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+        # st.markdown("---")
+        # st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
-                
+                 
         
         # Edit and Delete Projects
-        st.write("### Edit or Delete Projects")
+        st.markdown("---")
+        st.subheader("📂 Edit or Delete Projects")
+       
         
         # Create dropdown for project selection
         project_options = ["Select a project..."] + [f"{project[2]} (ID: {project[0]})" for project in projects_data]
@@ -6430,12 +6463,15 @@ else:
                             st.session_state.confirm_delete_project = True
                             st.rerun()
 
-        # Divider with spacing
-        st.markdown("---")
-        st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
+        # # Divider with spacing
+        # st.markdown("---")
+        # st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
+       
 
         # ======= System Settings Section =======
+        st.markdown("---")
         st.subheader("⚙️ System Settings")
+
         with st.expander("Customize System Settings", expanded=False):
             with st.form("system_settings_form"):
                 default_reminder_period = st.number_input("Default Reminder Period (days)", min_value=1, value=7)
