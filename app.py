@@ -6,7 +6,7 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 import hashlib
-from components.drag_and_drop import drag_and_drop
+# from components.drag_and_drop import drag_and_drop
 from streamlit_calendar import calendar
 from calendar_page import show_calendar_page
 from workspace_page import workspace_page
@@ -2521,49 +2521,203 @@ else:
 
     # Helper function to visualize task timeline (Gantt chart)
     def plot_task_timeline(tasks_df):
+        """Enhanced professional timeline visualization for tasks"""
         if tasks_df.empty:
             st.warning("No tasks found for visualization.")
             return
         
-        # Prepare data for Gantt chart - use the new column names
+        # Prepare data
         timeline_df = tasks_df.copy()
-        timeline_df['Start'] = pd.to_datetime(tasks_df['Planned Start Date'])
-        timeline_df['End'] = pd.to_datetime(tasks_df['Planned Deadline'])
-        timeline_df['Completion'] = (timeline_df['Status'] == 'Completed').astype(int)
         
-        # Add actual dates if they exist
-        if 'Actual Start Date' in tasks_df.columns:
-            timeline_df['Actual Start'] = pd.to_datetime(tasks_df['Actual Start Date'])
-        if 'Actual Deadline' in tasks_df.columns:
-            timeline_df['Actual End'] = pd.to_datetime(tasks_df['Actual Deadline'])
+        # Convert date columns to datetime, coercing errors to NaT
+        timeline_df['Planned Start Date'] = pd.to_datetime(timeline_df['Planned Start Date'], errors='coerce')
+        timeline_df['Planned Deadline'] = pd.to_datetime(timeline_df['Planned Deadline'], errors='coerce')
         
-        fig = px.timeline(
-            timeline_df,
-            x_start="Start",
-            x_end="End",
-            y="Task",
-            color="Status",
-            color_discrete_map=status_colors,
-            title="Task Timeline with Completion Status",
-            hover_data=["Priority", "Assignee", "Project Owner"]
+        # Filter out tasks with invalid/missing planned dates
+        timeline_df = timeline_df.dropna(subset=['Planned Start Date', 'Planned Deadline'])
+        
+        if timeline_df.empty:
+            st.warning("No valid tasks with complete date information found.")
+            return
+        
+        # Calculate duration in milliseconds for Plotly
+        timeline_df['Planned Duration'] = (
+            timeline_df['Planned Deadline'] - timeline_df['Planned Start Date']
+        ).dt.total_seconds() * 1000  # Convert to milliseconds
+        
+        # Handle actual dates if available
+        has_actual_dates = False
+        if 'Actual Start Date' in timeline_df.columns and 'Actual Deadline' in timeline_df.columns:
+            timeline_df['Actual Start Date'] = pd.to_datetime(timeline_df['Actual Start Date'], errors='coerce')
+            timeline_df['Actual Deadline'] = pd.to_datetime(timeline_df['Actual Deadline'], errors='coerce')
+            
+            # Only consider actual dates if both are present
+            actual_dates_mask = timeline_df['Actual Start Date'].notna() & timeline_df['Actual Deadline'].notna()
+            if actual_dates_mask.any():
+                has_actual_dates = True
+                timeline_df.loc[actual_dates_mask, 'Actual Duration'] = (
+                    timeline_df.loc[actual_dates_mask, 'Actual Deadline'] - 
+                    timeline_df.loc[actual_dates_mask, 'Actual Start Date']
+                ).dt.total_seconds() * 1000  # Convert to milliseconds
+        
+        # Helper function to safely format dates
+        def safe_strftime(date, default="Not set"):
+            if pd.isna(date):
+                return default
+            try:
+                return date.strftime('%b %d, %Y')
+            except:
+                return default
+        
+        # Create custom hover text with safe numeric conversion
+        def create_hover_text(row):
+            base_text = (
+                f"<b>{row['Task']}</b><br>"
+                f"<b>Project:</b> {row['Project']}<br>"
+                f"<b>Status:</b> {row['Status']}<br>"
+                f"<b>Priority:</b> {row['Priority']}<br>"
+                f"<b>Assignee:</b> {row['Assignee']}<br>"
+                f"<b>Planned:</b> {safe_strftime(row['Planned Start Date'])} - {safe_strftime(row['Planned Deadline'])}<br>"
+                f"<b>Duration:</b> {(float(row['Planned Duration']) / (1000 * 60 * 60 * 24)):.1f} days"
+            )
+            
+            if has_actual_dates and 'Actual Duration' in row:
+                try:
+                    actual_duration = float(row['Actual Duration'])
+                    actual_text = (
+                        f"<br><b>Actual:</b> {safe_strftime(row['Actual Start Date'])} - {safe_strftime(row['Actual Deadline'])}<br>"
+                        f"<b>Actual Duration:</b> {(actual_duration / (1000 * 60 * 60 * 24)):.1f} days"
+                    )
+                except (ValueError, TypeError):
+                    actual_text = "<br><b>Actual Duration:</b> Invalid data"
+                return base_text + actual_text
+            return base_text
+        
+        timeline_df['Hover Text'] = timeline_df.apply(create_hover_text, axis=1)
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add planned timeline bars
+        fig.add_trace(go.Bar(
+            y=timeline_df['Task'],
+            x=timeline_df['Planned Duration'].astype(float),  # Ensure numeric
+            base=timeline_df['Planned Start Date'].astype('int64') // 10**6,  # Convert to milliseconds
+            orientation='h',
+            name='Planned',
+            marker_color='rgba(78, 139, 245, 0.6)',  # Semi-transparent blue
+            marker_line_color='rgba(78, 139, 245, 1.0)',
+            marker_line_width=1,
+            hoverinfo='text',
+            hovertext=timeline_df['Hover Text'],
+            customdata=timeline_df[['Status', 'Priority']]
+        ))
+        
+        # Add actual timeline bars if available
+        if has_actual_dates:
+            fig.add_trace(go.Bar(
+                y=timeline_df.loc[actual_dates_mask, 'Task'],
+                x=timeline_df.loc[actual_dates_mask, 'Actual Duration'].astype(float),  # Ensure numeric
+                base=timeline_df.loc[actual_dates_mask, 'Actual Start Date'].astype('int64') // 10**6,  # Convert to milliseconds
+                orientation='h',
+                name='Actual',
+                marker_color='rgba(50, 205, 50, 0.6)',  # Semi-transparent green
+                marker_line_color='rgba(50, 205, 50, 1.0)',
+                marker_line_width=1,
+                hoverinfo='text',
+                hovertext=timeline_df.loc[actual_dates_mask, 'Hover Text']
+            ))
+        
+        # Add today's line - convert datetime to milliseconds since epoch
+        today = datetime.now()
+        today_ms = today.timestamp() * 1000  # Convert to milliseconds
+        
+        fig.add_vline(
+            x=today_ms,
+            line_width=2,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Today: {today.strftime('%b %d, %Y')}",
+            annotation_position="top right",
+            annotation_font_size=12,
+            annotation_font_color="red"
         )
         
-        # Add actual dates to hover data if they exist
-        if 'Actual Start' in timeline_df.columns and 'Actual End' in timeline_df.columns:
-            fig.update_traces(
-                customdata=timeline_df[['Actual Start', 'Actual End']],
-                hovertemplate=(
-                    "<b>%{y}</b><br>" +
-                    "Planned: %{x|%b %d, %Y} - %{x_end|%b %d, %Y}<br>" +
-                    "Actual: %{customdata[0]|%b %d, %Y} - %{customdata[1]|%b %d, %Y}<br>" +
-                    "Status: %{marker.color}<br>" +
-                    "Priority: %{customdata[2]}<br>" +
-                    "Project: %{customdata[3]}<extra></extra>"
-                )
+        # Update layout for professional appearance
+        fig.update_layout(
+            title='<b>Task Timeline Comparison</b>',
+            title_font_size=20,
+            title_x=0.05,
+            title_y=0.95,
+            barmode='overlay',
+            height=max(600, len(timeline_df) * 30),  # Dynamic height based on number of tasks
+            hovermode='closest',
+            xaxis_title='Timeline',
+            yaxis_title='Tasks',
+            yaxis=dict(
+                autorange=True,
+                showgrid=True,
+                zeroline=True,
+                gridcolor='rgba(0, 0, 0, 0.05)'
+            ),
+            xaxis=dict(
+                type='date',  # Tell Plotly this is a date axis
+                showgrid=True,
+                zeroline=True,
+                gridcolor='rgba(0, 0, 0, 0.05)',
+                tickformat='%b %d, %Y'  # Format dates nicely
+            ),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            margin=dict(l=100, r=50, b=100, t=100, pad=10),
+            plot_bgcolor='rgba(255, 255, 255, 0.9)',
+            paper_bgcolor='rgba(255, 255, 255, 0.9)',
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=12,
+                font_family="Arial"
             )
+        )
         
-        fig.update_yaxes(autorange="reversed")
+        # Add status-based color coding
+        for status, color in status_colors.items():
+            status_tasks = timeline_df[timeline_df['Status'] == status]
+            if not status_tasks.empty:
+                fig.add_trace(go.Scatter(
+                    x=[None],  # These won't be visible
+                    y=[None],
+                    mode='markers',
+                    marker=dict(size=10, color=color),
+                    name=status,
+                    hoverinfo='none',
+                    showlegend=True
+                ))
+        
+        # Display the figure
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Add download button
+        with st.expander("📥 Export Options", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="Download Data as CSV",
+                    data=timeline_df.to_csv(index=False),
+                    file_name="task_timeline_data.csv",
+                    mime="text/csv"
+                )
+            with col2:
+                st.download_button(
+                    label="Download Chart as PNG",
+                    data=fig.to_image(format="png"),
+                    file_name="task_timeline.png",
+                    mime="image/png"
+                )
 
 
     #helper function to visualize assignee workload (Sunburst chart)
@@ -2738,7 +2892,7 @@ else:
                     st.plotly_chart(fig, use_container_width=True)
     
 
-
+ 
     
      # Dashboard Page 
     if page == "Dashboard":
