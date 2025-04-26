@@ -4680,47 +4680,113 @@ else:
         
         
         # ======= Project List Section =======
+        # ======= Project List Section =======
         st.subheader("📋 Project List")
 
         # Add custom CSS for card styling
         st.markdown("""
         <style>
             /* Card styling */
-            [data-testid="stVerticalBlock"] > [style*="flex-direction: column"] {
+            .project-card {
                 border: 1px solid #e0e0e0;
                 border-radius: 8px;
                 padding: 16px;
                 margin-bottom: 20px;
                 background-color: #FFFFFF;
                 box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                height: 100%;
+                display: flex;
+                flex-direction: column;
             }
             
-            /* Status indicator */
-            .status-indicator {
-                margin-top: 10px;
-                padding-top: 8px;
+            .project-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 12px;
+            }
+            
+            .project-card-title {
+                margin: 0;
+                color: #2c3e50;
+                font-size: 1.1rem;
+                font-weight: 600;
+                flex-grow: 1;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            
+            .project-card-body {
+                flex-grow: 1;
+                margin-bottom: 12px;
+            }
+            
+            .project-card-description {
+                color: #666;
+                font-size: 0.9rem;
+                margin-bottom: 12px;
+                display: -webkit-box;
+                -webkit-line-clamp: 3;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+            
+            .project-card-detail {
+                display: flex;
+                align-items: center;
+                margin-bottom: 8px;
+                font-size: 0.85rem;
+            }
+            
+            .project-card-detail-icon {
+                margin-right: 8px;
+                color: #666;
+            }
+            
+            .project-card-footer {
+                margin-top: auto;
+                padding-top: 12px;
                 border-top: 1px solid #f0f0f0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
             }
             
-            /* Select box styling */
-            [data-testid="stSelectbox"] {
-                margin-bottom: 20px;
+            .project-status {
+                font-size: 0.8rem;
+                font-weight: 500;
+                padding: 4px 8px;
+                border-radius: 4px;
             }
             
-            /* Overdue project styling */
-            .overdue-card {
-                background-color: #FFEBEE !important;
-                border-left: 4px solid #D32F2F !important;
+            .status-overdue {
+                background-color: #FFEBEE;
+                color: #D32F2F;
             }
             
-            /* On-track project styling */
-            .ontrack-card {
-                background-color: #E8F5E9 !important;
-                border-left: 4px solid #388E3C !important;
+            .status-ontrack {
+                background-color: #E8F5E9;
+                color: #388E3C;
+            }
+            
+            .project-card-actions {
+                display: flex;
+                gap: 8px;
+            }
+            
+            /* Ensure columns have equal height */
+            [data-testid="column"] {
+                display: flex;
+                flex-direction: column;
+            }
+            
+            /* Make sure all cards in a row have equal height */
+            .stColumn > div {
+                height: 100%;
             }
         </style>
         """, unsafe_allow_html=True)            
-            
 
         # Fetch all projects with additional details
         projects = query_db("""
@@ -4762,56 +4828,59 @@ else:
                 today = datetime.now().date()
                 end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else today
                 is_overdue = end_date_obj < today
-               
-                
-                # In your project card section, modify the container to include the dynamic class:
-                # card_class = "overdue-card" if is_overdue else "ontrack-card"
-
+                status_class = "status-overdue" if is_overdue else "status-ontrack"
+                status_text = "⚠️ Overdue" if is_overdue else "🟢 On track"
                 
                 with cols[idx % 3]:  # Distribute across columns
                     # Create a card container
-                    with st.container():
-                        card_class = "overdue-card" if is_overdue else "ontrack-card"
-                        # Card header with title and ID
-                        st.markdown(f"""
-                        <div class="{card_class}" style="padding: 16px; border-radius: 8px; margin-bottom: 20px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                            <h3 style="margin: 0; color: #2c3e50;">{name}</h3>
-                            <span style="font-size: 0.8rem; color: #666;">ID: {project_id}</span>
+                    st.markdown(f"""
+                    <div class="project-card">
+                        <div class="project-card-header">
+                            <h3 class="project-card-title" title="{name}">{name}</h3>
                         </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Project description
-                        st.caption(description or "No description provided")
-                        
-                        # Project details
-                        st.write(f"**Owner:** {owner_username}")
-                        st.write(f"**Timeline:** {start_fmt} → {end_fmt}")
-                        st.write(f"**Budget:** {budget_fmt}")
-                        
-                        # Status indicator
-                        status_color = "#D32F2F" if is_overdue else "#388E3C"
-                        status_text = "⚠️ Overdue" if is_overdue else "🟢 On track"
-                        st.markdown(f"""
-                        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #f0f0f0;">
-                            <span style="color: {status_color}; font-weight: 500;">{status_text}</span>
+                        <div class="project-card-body">
+                            <p class="project-card-description" title="{description or 'No description provided'}">
+                                {description or "No description provided"}
+                            </p>
+                            <div class="project-card-detail">
+                                <span class="project-card-detail-icon">👤</span>
+                                <span>{owner_username}</span>
+                            </div>
+                            <div class="project-card-detail">
+                                <span class="project-card-detail-icon">📅</span>
+                                <span>{start_fmt} → {end_fmt}</span>
+                            </div>
+                            <div class="project-card-detail">
+                                <span class="project-card-detail-icon">💰</span>
+                                <span>{budget_fmt}</span>
+                            </div>
                         </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Action buttons - Only show if admin or project owner
-                        show_edit = st.session_state.user_role == "Admin" or owner_id == st.session_state.user_id
-                        show_delete = st.session_state.user_role == "Admin"
-                        
-                        if show_edit or show_delete:
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                if show_edit and st.button("✏️ Edit", key=f"edit_{project_id}"):
-                                    st.session_state['editing_project_id'] = project_id
-                                    st.rerun()
-                            with col2:
-                                if show_delete and st.button("🗑️ Delete", key=f"delete_{project_id}", type="primary"):
-                                    st.session_state['deleting_project_id'] = project_id
-                                    st.rerun()
+                        <div class="project-card-footer">
+                            <span class="project-status {status_class}">{status_text}</span>
+                            <div class="project-card-actions">
+                    """, unsafe_allow_html=True)
+                    
+                    # Action buttons - Only show if admin or project owner
+                    show_edit = st.session_state.user_role == "Admin" or owner_id == st.session_state.user_id
+                    show_delete = st.session_state.user_role == "Admin"
+                    
+                    if show_edit:
+                        if st.button("✏️ Edit", key=f"edit_{project_id}"):
+                            st.session_state['editing_project_id'] = project_id
+                            st.rerun()
+                    
+                    if show_delete:
+                        if st.button("🗑️ Delete", key=f"delete_{project_id}"):
+                            st.session_state['deleting_project_id'] = project_id
+                            st.rerun()
+                    
+                    st.markdown("""
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+
 
         # Edit Form Modal - This needs to be OUTSIDE the card display loop
         if 'editing_project_id' in st.session_state and st.session_state.editing_project_id:
@@ -4888,9 +4957,7 @@ else:
 
 
 
-
-
-   
+    
     # Tasks Page
     elif page == "Tasks":
         st.markdown("---")
@@ -4905,6 +4972,38 @@ else:
                 border-radius: 10px;
                 margin-bottom: 2rem;
                 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            
+            .task-grid-container {
+                position: relative;
+                margin-bottom: 20px;
+            }
+            
+            .task-grid {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0;
+            }
+            
+            .task-column {
+                flex: 1;
+                min-width: 0;
+                padding: 0 15px;
+                position: relative;
+            }
+            
+            .task-column:not(:last-child)::after {
+                content: "";
+                position: absolute;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                width: 1px;
+                background: linear-gradient(to bottom, 
+                    rgba(0,0,0,0) 0%, 
+                    rgba(224,224,224,1) 10%, 
+                    rgba(224,224,224,1) 90%, 
+                    rgba(0,0,0,0) 100%);
             }
             
             .task-card {
@@ -4939,6 +5038,23 @@ else:
                 padding-top: 10px;
                 display: flex;
                 justify-content: space-between;
+            }
+            
+            @media (max-width: 900px) {
+                .task-column {
+                    flex: 100%;
+                    padding: 0;
+                    margin-bottom: 20px;
+                }
+                
+                .task-column:not(:last-child) {
+                    padding-bottom: 20px;
+                    border-bottom: 1px solid #e0e0e0;
+                }
+                
+                .task-column:not(:last-child)::after {
+                    display: none;
+                }
             }
         </style>
         """, unsafe_allow_html=True)
@@ -5033,6 +5149,7 @@ else:
         # ======= Project Tasks Section =======
 
         # Display Project Tasks Section
+        # Display Project Tasks Section
         st.markdown("---")
         st.header("📋 Project Tasks")
 
@@ -5054,61 +5171,90 @@ else:
                 if not tasks:
                     st.warning("No tasks found for this project.")
                 else:
-                    # Display tasks in a grid of 3 columns
+                    # Custom CSS for visible dividers
+                    st.markdown("""
+                    <style>
+                        .task-column {
+                            position: relative;
+                            padding: 0 15px;
+                        }
+                        .task-column:not(:last-child)::after {
+                            content: "";
+                            position: absolute;
+                            right: 0;
+                            top: 10%;
+                            bottom: 10%;
+                            width: 1px;
+                            background-color: #e0e0e0;
+                        }
+                        .task-card {
+                            border: 1px solid #e0e0e0;
+                            border-radius: 8px;
+                            padding: 16px;
+                            margin-bottom: 20px;
+                            background: white;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        }
+                    </style>
+                    """, unsafe_allow_html=True)
+
+                    # Create columns for the grid
                     cols = st.columns(3)
+                    
                     for i, task in enumerate(tasks):
                         task_id = task[0]
                         is_overdue = (datetime.strptime(task[6], "%Y-%m-%d").date() < datetime.today().date() 
                                     if task[6] else False) and task[4] != "Completed"
                         
-                        # Determine button visibility
-                        is_admin = st.session_state.user_role == "Admin"
-                        is_project_owner = query_db(
-                            "SELECT user_id FROM projects WHERE id=?", 
-                            (task[1],), one=True
-                        )[0] == st.session_state.user_id
-                        is_task_assignee = task[10] == st.session_state.user_id
-                        
                         # Get the current column (0, 1, or 2)
                         col = cols[i % 3]
                         
                         with col:
-                            # Task card container
-                            card_class = "task-card task-card-overdue" if is_overdue else "task-card"
-                            st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
+                            # Task card with conditional overdue styling
+                            card_border = "4px solid #ff4d4d" if is_overdue else "1px solid #e0e0e0"
+                            card_bg = "#fff5f5" if is_overdue else "white"
                             
-                            # Task content
-                            st.markdown(f"""
-                            <div class="task-card-content">
-                                <h3 style="margin-top:0;color:#2c3e50;">{task[2]}</h3>
-                                <p><strong>Status:</strong> {task[4]} {'⚠️ OVERDUE' if is_overdue else ''}</p>
-                                <p><strong>Priority:</strong> <span style="color:{priority_colors.get(task[8], '#000000')}">{task[8]}</span></p>
-                                <p><strong>Deadline:</strong> {task[6]}</p>
-                                <p><strong>Description:</strong></p>
-                                <div style="background:#f8f9fa; padding:10px; border-radius:4px; margin:5px 0;">
-                                    {task[3] or "No description provided"}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
+                            st.markdown(
+                                f'<div style="border-left:{card_border}; border-radius:8px; padding:16px; '
+                                f'margin-bottom:20px; background:{card_bg}; box-shadow:0 2px 8px rgba(0,0,0,0.1)">'
+                                f'<h3 style="margin-top:0;color:#2c3e50;">{task[2]}</h3>'
+                                f'<p><strong>Status:</strong> {task[4]} {"⚠️ OVERDUE" if is_overdue else ""}</p>'
+                                f'<p><strong>Priority:</strong> <span style="color:{priority_colors.get(task[8], "#000000")}">{task[8]}</span></p>'
+                                f'<p><strong>Deadline:</strong> {task[6]}</p>'
+                                f'<p><strong>Description:</strong></p>'
+                                f'<div style="background:#f8f9fa; padding:10px; border-radius:4px; margin:5px 0;">'
+                                f'{task[3] or "No description provided"}'
+                                f'</div>'
+                                f'<div style="display:flex; justify-content:space-between; margin-top:15px;">',
+                                unsafe_allow_html=True
+                            )
                             
-                            # Buttons container
-                            st.markdown('<div class="task-card-buttons">', unsafe_allow_html=True)
+                            # Determine button visibility
+                            is_admin = st.session_state.user_role == "Admin"
+                            is_project_owner = query_db(
+                                "SELECT user_id FROM projects WHERE id=?", 
+                                (task[1],), one=True
+                            )[0] == st.session_state.user_id
+                            is_task_assignee = task[10] == st.session_state.user_id
                             
-                            # Edit button (conditionally shown)
+                            # Edit button
                             if is_admin or is_project_owner or is_task_assignee:
                                 if st.button("✏️ Edit", key=f"edit_{task_id}"):
                                     st.session_state.editing_task_id = task_id
-                                    st.session_state.editing_task_project = task[1]  # project_id
+                                    st.session_state.editing_task_project = task[1]
                                     st.rerun()
                             
-                            # Delete button (conditionally shown)
+                            # Delete button
                             if is_admin or is_project_owner:
                                 if st.button("🗑️ Delete", key=f"delete_{task_id}"):
                                     st.session_state.deleting_task_id = task_id
                                     st.rerun()
                             
-                            st.markdown('</div>', unsafe_allow_html=True)  # Close buttons container
-                            st.markdown('</div>', unsafe_allow_html=True)  # Close task card container
+                            st.markdown('</div></div>', unsafe_allow_html=True)
+                    
+                    # Close the grid containers
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
                     
                     # Edit Task Form (shown after all cards if editing)
                     if 'editing_task_id' in st.session_state:
@@ -5165,6 +5311,9 @@ else:
                                         if st.button("❌ Cancel", key=f"cancel_delete_{task_id}"):
                                             del st.session_state.deleting_task_id
                                             st.rerun()
+
+
+
 
         # ======= Section Divider =======
         st.markdown("---")

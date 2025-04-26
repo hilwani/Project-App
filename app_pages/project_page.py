@@ -3119,7 +3119,6 @@ else:
                         <div class="{card_class}" style="padding: 16px; border-radius: 8px; margin-bottom: 20px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                             <h3 style="margin: 0; color: #2c3e50;">{name}</h3>
-                            <span style="font-size: 0.8rem; color: #666;">ID: {project_id}</span>
                         </div>
                         """, unsafe_allow_html=True)
                         
