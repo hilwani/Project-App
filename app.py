@@ -4889,6 +4889,10 @@ else:
 
 
 
+
+   
+
+    
     # Tasks Page
     elif page == "Tasks":
         st.markdown("---")
@@ -4905,6 +4909,88 @@ else:
                 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             }
             
+            .task-grid-container {
+                position: relative;
+                margin-bottom: 20px;
+            }
+            
+            .task-grid {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0;
+            }
+            
+            .task-column {
+                flex: 1;
+                min-width: 0;
+                padding: 0 15px;
+                position: relative;
+            }
+            
+            .task-column:not(:last-child)::after {
+                content: "";
+                position: absolute;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                width: 1px;
+                background: linear-gradient(to bottom, 
+                    rgba(0,0,0,0) 0%, 
+                    rgba(224,224,224,1) 10%, 
+                    rgba(224,224,224,1) 90%, 
+                    rgba(0,0,0,0) 100%);
+            }
+            
+            .task-card {
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 16px;
+                background: white;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                transition: transform 0.2s, box-shadow 0.2s;
+                height: 100%;
+                margin-bottom: 20px;
+            }
+            
+            .task-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            }
+            
+            .task-card-overdue {
+                border-left: 4px solid #ff4d4d;
+                background: #fff5f5;
+            }
+            
+            .task-card-content {
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .task-card-buttons {
+                margin-top: auto;
+                padding-top: 10px;
+                display: flex;
+                justify-content: space-between;
+            }
+            
+            @media (max-width: 900px) {
+                .task-column {
+                    flex: 100%;
+                    padding: 0;
+                    margin-bottom: 20px;
+                }
+                
+                .task-column:not(:last-child) {
+                    padding-bottom: 20px;
+                    border-bottom: 1px solid #e0e0e0;
+                }
+                
+                .task-column:not(:last-child)::after {
+                    display: none;
+                }
+            }
         </style>
         """, unsafe_allow_html=True)
 
@@ -4917,8 +5003,6 @@ else:
         </div>
         """, unsafe_allow_html=True)
         
-        # ======= Section Divider =======
-        # ======= Section Divider =======
         # ======= Section Divider =======
         st.markdown("---")
         st.header("📂 Create New Tasks")
@@ -4995,12 +5079,11 @@ else:
         else:
             st.warning("⛔ You don't have permission to create tasks. Only project owners can create tasks for their projects.")
 
-
-
         # ======= Section Divider =======
         
         # ======= Project Tasks Section =======
 
+        # Display Project Tasks Section
         # Display Project Tasks Section
         st.markdown("---")
         st.header("📋 Project Tasks")
@@ -5023,46 +5106,64 @@ else:
                 if not tasks:
                     st.warning("No tasks found for this project.")
                 else:
-                    # Display tasks with inline editing and deletion
-                    for task in tasks:
-                        task_id = task[0]
-                        with st.container():
-                            # Task card styling
-                            is_overdue = (datetime.strptime(task[6], "%Y-%m-%d").date() < datetime.today().date() 
-                                        if task[6] else False) and task[4] != "Completed"
-                            
-                            card_style = """
-                                border: 1px solid #e0e0e0;
-                                border-radius: 8px;
-                                padding: 16px;
-                                margin: 10px 0;
-                                background: white;
-                                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                            """
-                            
-                            if is_overdue:
-                                card_style = """
-                                    border-left: 4px solid #ff4d4d;
-                                    border-radius: 8px;
-                                    padding: 16px;
-                                    margin: 10px 0;
-                                    background: #fff5f5;
-                                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                                """
-                            
-                            st.markdown(f"""
-                            <div style="{card_style}">
-                                <h3 style="margin-top:0;color:#2c3e50;">{task[2]}</h3>
-                                <p><strong>Status:</strong> {task[4]} {'⚠️ OVERDUE' if is_overdue else ''}</p>
-                                <p><strong>Priority:</strong> <span style="color:{priority_colors.get(task[8], '#000000')}">{task[8]}</span></p>
-                                <p><strong>Deadline:</strong> {task[6]}</p>
-                                <p><strong>Description:</strong></p>
-                                <div style="background:#f8f9fa; padding:10px; border-radius:4px; margin:5px 0;">
-                                    {task[3] or "No description provided"}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
+                    # Custom CSS for visible dividers
+                    st.markdown("""
+                    <style>
+                        .task-column {
+                            position: relative;
+                            padding: 0 15px;
+                        }
+                        .task-column:not(:last-child)::after {
+                            content: "";
+                            position: absolute;
+                            right: 0;
+                            top: 10%;
+                            bottom: 10%;
+                            width: 1px;
+                            background-color: #e0e0e0;
+                        }
+                        .task-card {
+                            border: 1px solid #e0e0e0;
+                            border-radius: 8px;
+                            padding: 16px;
+                            margin-bottom: 20px;
+                            background: white;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        }
+                    </style>
+                    """, unsafe_allow_html=True)
 
+                    # Create columns for the grid
+                    cols = st.columns(3)
+                    
+                    for i, task in enumerate(tasks):
+                        task_id = task[0]
+                        is_overdue = (datetime.strptime(task[6], "%Y-%m-%d").date() < datetime.today().date() 
+                                    if task[6] else False) and task[4] != "Completed"
+                        
+                        # Get the current column (0, 1, or 2)
+                        col = cols[i % 3]
+                        
+                        with col:
+                            # Task card with conditional overdue styling
+                            card_border = "4px solid #ff4d4d" if is_overdue else "1px solid #e0e0e0"
+                            card_bg = "#fff5f5" if is_overdue else "white"
+                            
+                            st.markdown(
+                                f'<div style="border-left:{card_border}; border-radius:8px; padding:16px; '
+                                f'margin-bottom:20px; background:{card_bg}; box-shadow:0 2px 8px rgba(0,0,0,0.1)">'
+                                f'<h3 style="margin-top:0;color:#2c3e50;">{task[2]}</h3>'
+                                f'<p><strong>Status:</strong> {task[4]} {"⚠️ OVERDUE" if is_overdue else ""}</p>'
+                                f'<p><strong>Priority:</strong> <span style="color:{priority_colors.get(task[8], "#000000")}">{task[8]}</span></p>'
+                                f'<p><strong>Deadline:</strong> {task[6]}</p>'
+                                f'<p><strong>Description:</strong></p>'
+                                f'<div style="background:#f8f9fa; padding:10px; border-radius:4px; margin:5px 0;">'
+                                f'{task[3] or "No description provided"}'
+                                f'</div>'
+                                f'<div style="display:flex; justify-content:space-between; margin-top:15px;">',
+                                unsafe_allow_html=True
+                            )
+                            
                             # Determine button visibility
                             is_admin = st.session_state.user_role == "Admin"
                             is_project_owner = query_db(
@@ -5071,88 +5172,81 @@ else:
                             )[0] == st.session_state.user_id
                             is_task_assignee = task[10] == st.session_state.user_id
                             
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                # Show Edit button for admins, project owners, or task assignees
-                                if (is_admin or is_project_owner or is_task_assignee) and st.button("✏️ Edit", key=f"edit_{task_id}"):
+                            # Edit button
+                            if is_admin or is_project_owner or is_task_assignee:
+                                if st.button("✏️ Edit", key=f"edit_{task_id}"):
                                     st.session_state.editing_task_id = task_id
-                                    st.session_state.editing_task_project = task[1]  # project_id
+                                    st.session_state.editing_task_project = task[1]
                                     st.rerun()
                             
-                            with col2:
-                                # Show Delete button only for admins and project owners
-                                if (is_admin or is_project_owner) and st.button("🗑️ Delete", key=f"delete_{task_id}", type="primary"):
+                            # Delete button
+                            if is_admin or is_project_owner:
+                                if st.button("🗑️ Delete", key=f"delete_{task_id}"):
                                     st.session_state.deleting_task_id = task_id
                                     st.rerun()
+                            
+                            st.markdown('</div></div>', unsafe_allow_html=True)
+                    
+                    # Close the grid containers
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Edit Task Form (shown after all cards if editing)
+                    if 'editing_task_id' in st.session_state:
+                        task_id = st.session_state.editing_task_id
+                        project_id = st.session_state.editing_task_project
+                        task = query_db("SELECT * FROM tasks WHERE id=?", (task_id,), one=True)
+                        
+                        if task:
+                            project_owner = query_db(
+                                "SELECT user_id FROM projects WHERE id=?",
+                                (project_id,), one=True
+                            )
+                            is_project_owner = (project_owner and project_owner[0] == st.session_state.user_id) or st.session_state.user_role == "Admin"
+                            is_task_assignee = task[10] == st.session_state.user_id
+                            
+                            if is_admin or is_project_owner or is_task_assignee:
+                                with st.expander(f"✏️ Editing Task: {task[2]}", expanded=True):
+                                    if edit_task_form(task_id, project_id):
+                                        del st.session_state.editing_task_id
+                                        st.rerun()
+                                    elif st.button("Close Without Saving"):
+                                        del st.session_state.editing_task_id
+                                        st.rerun()
 
-                            # Edit Task Form (shown immediately after the task card if editing)
-                            # Edit Task Form (shown immediately after the task card if editing)
-                            if 'editing_task_id' in st.session_state and st.session_state.editing_task_id == task_id:
-                                task_id = st.session_state.editing_task_id
-                                project_id = st.session_state.editing_task_project
-
-
-                                # New fixed code
-                                project_owner = query_db(
-                                    "SELECT user_id FROM projects WHERE id=?",
-                                    (project_id,), one=True
-                                )
-                                is_project_owner = (project_owner and project_owner[0] == st.session_state.user_id) or st.session_state.user_role == "Admin"
-
-
-
-                                is_task_assignee = task[10] == st.session_state.user_id
-                                
-                                if is_admin or is_project_owner or is_task_assignee:
-                                    # Use the new unified edit form
-                                    with st.expander(f"✏️ Editing Task: {task[2]}", expanded=True):
-                                        if edit_task_form(task_id, project_id):
-                                            # If save was successful, clear editing state
-                                            del st.session_state.editing_task_id
-                                            st.rerun()
-                                        elif st.button("Close Without Saving"):
-                                            del st.session_state.editing_task_id
-                                            st.rerun()
-
-
-                            # Delete Confirmation (shown immediately after the task card if deleting)
-                            if 'deleting_task_id' in st.session_state and st.session_state.deleting_task_id == task_id:
-                                task_id = st.session_state.deleting_task_id
-                                task = query_db("SELECT * FROM tasks WHERE id=?", (task_id,), one=True)
-                                
-                                if task:
-                                    # Check delete permissions
-                                    is_admin = st.session_state.user_role == "Admin"
-                                    is_project_owner = query_db(
-                                        "SELECT user_id FROM projects WHERE id=?", 
-                                        (task[1],), one=True
-                                    )[0] == st.session_state.user_id
+                    # Delete Confirmation (shown after all cards if deleting)
+                    if 'deleting_task_id' in st.session_state:
+                        task_id = st.session_state.deleting_task_id
+                        task = query_db("SELECT * FROM tasks WHERE id=?", (task_id,), one=True)
+                        
+                        if task:
+                            is_admin = st.session_state.user_role == "Admin"
+                            is_project_owner = query_db(
+                                "SELECT user_id FROM projects WHERE id=?", 
+                                (task[1],), one=True
+                            )[0] == st.session_state.user_id
+                            
+                            if is_admin or is_project_owner:
+                                with st.container():
+                                    st.warning(f"⚠️ Are you sure you want to delete task: {task[2]}?")
+                                    st.error("This action cannot be undone and will delete all associated data!")
                                     
-                                    if is_admin or is_project_owner:
-                                        with st.container():
-                                            st.warning(f"⚠️ Are you sure you want to delete task: {task[2]}?")
-                                            st.error("This action cannot be undone and will delete all associated data!")
-                                            
-                                            col1, col2 = st.columns(2)
-                                            with col1:
-                                                if st.button("✅ Confirm Delete", key=f"confirm_delete_{task_id}", type="primary"):
-                                                    # Delete task dependencies first
-                                                    query_db("DELETE FROM task_dependencies WHERE task_id=? OR depends_on_task_id=?", (task_id, task_id))
-                                                    # Delete task comments
-                                                    query_db("DELETE FROM comments WHERE task_id=?", (task_id,))
-                                                    # Delete task subtasks
-                                                    query_db("DELETE FROM subtasks WHERE task_id=?", (task_id,))
-                                                    # Delete task attachments
-                                                    query_db("DELETE FROM attachments WHERE task_id=?", (task_id,))
-                                                    # Finally delete the task
-                                                    query_db("DELETE FROM tasks WHERE id=?", (task_id,))
-                                                    st.success("Task deleted successfully!")
-                                                    del st.session_state.deleting_task_id
-                                                    st.rerun()
-                                            with col2:
-                                                if st.button("❌ Cancel", key=f"cancel_delete_{task_id}"):
-                                                    del st.session_state.deleting_task_id
-                                                    st.rerun()
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        if st.button("✅ Confirm Delete", key=f"confirm_delete_{task_id}", type="primary"):
+                                            query_db("DELETE FROM task_dependencies WHERE task_id=? OR depends_on_task_id=?", (task_id, task_id))
+                                            query_db("DELETE FROM comments WHERE task_id=?", (task_id,))
+                                            query_db("DELETE FROM subtasks WHERE task_id=?", (task_id,))
+                                            query_db("DELETE FROM attachments WHERE task_id=?", (task_id,))
+                                            query_db("DELETE FROM tasks WHERE id=?", (task_id,))
+                                            st.success("Task deleted successfully!")
+                                            del st.session_state.deleting_task_id
+                                            st.rerun()
+                                    with col2:
+                                        if st.button("❌ Cancel", key=f"cancel_delete_{task_id}"):
+                                            del st.session_state.deleting_task_id
+                                            st.rerun()
+
 
 
 
@@ -5165,11 +5259,7 @@ else:
         # Simplified tabs without project filter
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Timeline", "Progress", "Priority Breakdown", "Budget Tracking", "Budget Variance", "Workload"])
 
-        
-        
         with tab1:
-
-            # In the Tasks page section, before calling plot_task_timeline()
             st.markdown("""
             <style>
                 .stPlotlyChart {
@@ -5185,10 +5275,7 @@ else:
             </style>
             """, unsafe_allow_html=True)
 
-            plot_task_timeline(tasks_df)  # Existing visualization call
-
-
-            # plot_task_timeline(tasks_df)
+            plot_task_timeline(tasks_df)
         
         with tab2:
             plot_task_progress_over_time(tasks_df)

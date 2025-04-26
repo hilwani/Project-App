@@ -231,13 +231,7 @@ from visualizations import (
                             if 'editing_task_id' in st.session_state and st.session_state.editing_task_id == task_id:
                                 task_id = st.session_state.editing_task_id
                                 project_id = st.session_state.editing_task_project
-                                
-                                # # Check edit permissions
-                                # is_admin = st.session_state.user_role == "Admin"
-                                # is_project_owner = query_db(
-                                #     "SELECT user_id FROM projects WHERE id=?", 
-                                #     (project_id,), one=True
-                                # )[0] == st.session_state.user_id
+
 
                                 # New fixed code
                                 project_owner = query_db(
@@ -315,7 +309,27 @@ from visualizations import (
         
         
         with tab1:
-            plot_task_timeline(tasks_df)
+
+            # In the Tasks page section, before calling plot_task_timeline()
+            st.markdown("""
+            <style>
+                .stPlotlyChart {
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    padding: 10px;
+                    background: white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                }
+                .stDownloadButton>button {
+                    width: 100% !important;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+
+            plot_task_timeline(tasks_df)  # Existing visualization call
+
+
+            # plot_task_timeline(tasks_df)
         
         with tab2:
             plot_task_progress_over_time(tasks_df)
