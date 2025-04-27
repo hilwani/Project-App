@@ -5394,6 +5394,7 @@ else:
 
     
     # Notifications Page
+    # Notifications Page
     elif page == "Notifications":
         st.markdown("---")
         
@@ -5495,44 +5496,6 @@ else:
             return upcoming_tasks, overdue_tasks
 
         upcoming_tasks, overdue_tasks = get_upcoming_and_overdue_tasks()
-
-        # Display task details if a task is selected
-        if st.session_state.viewing_task_id:
-            task_id = st.session_state.viewing_task_id
-            task = query_db("""
-                SELECT t.*, p.name as project_name, u.username as assignee_name
-                FROM tasks t
-                LEFT JOIN projects p ON t.project_id = p.id
-                LEFT JOIN users u ON t.assigned_to = u.id
-                WHERE t.id = ?
-            """, (task_id,), one=True)
-            
-            if task:
-                with st.expander(f"📝 Task Details: {task[2]}", expanded=True):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**Project:** {task[-2] if task[-2] else 'No project'}")
-                        st.write(f"**Title:** {task[2]}")
-                        st.write(f"**Status:** {task[4]}")
-                    with col2:
-                        st.write(f"**Assignee:** {task[-1] if task[-1] else 'Unassigned'}")
-                        st.write(f"**Start Date:** {task[11] if task[11] else 'Not set'}")
-                        st.write(f"**Deadline:** {task[6]}")
-                    
-                    st.divider()
-                    st.write("**Description:**")
-                    st.write(task[3] or "No description available")
-                    
-                    st.divider()
-                    st.write(f"**Time Spent:** {task[7]} hours")
-                    
-                    if st.button("Close Details"):
-                        st.session_state.viewing_task_id = None
-                        st.rerun()
-            else:
-                st.warning("Task not found")
-                st.session_state.viewing_task_id = None
-                st.rerun()
 
         # Summary Cards
         st.subheader("📊 Notification Summary")
@@ -5675,6 +5638,45 @@ else:
                             st.rerun()
             else:
                 st.info("No upcoming tasks matching your filters.")
+
+        # Display task details at the BOTTOM of the page if a task is selected
+        if st.session_state.viewing_task_id:
+            task_id = st.session_state.viewing_task_id
+            task = query_db("""
+                SELECT t.*, p.name as project_name, u.username as assignee_name
+                FROM tasks t
+                LEFT JOIN projects p ON t.project_id = p.id
+                LEFT JOIN users u ON t.assigned_to = u.id
+                WHERE t.id = ?
+            """, (task_id,), one=True)
+            
+            if task:
+                st.markdown("---")  # Add a divider before the task details
+                with st.expander(f"📝 Task Details: {task[2]}", expanded=True):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Project:** {task[-2] if task[-2] else 'No project'}")
+                        st.write(f"**Title:** {task[2]}")
+                        st.write(f"**Status:** {task[4]}")
+                    with col2:
+                        st.write(f"**Assignee:** {task[-1] if task[-1] else 'Unassigned'}")
+                        st.write(f"**Start Date:** {task[11] if task[11] else 'Not set'}")
+                        st.write(f"**Deadline:** {task[6]}")
+                    
+                    st.divider()
+                    st.write("**Description:**")
+                    st.write(task[3] or "No description available")
+                    
+                    st.divider()
+                    st.write(f"**Time Spent:** {task[7]} hours")
+                    
+                    if st.button("Close Details"):
+                        st.session_state.viewing_task_id = None
+                        st.rerun()
+            else:
+                st.warning("Task not found")
+                st.session_state.viewing_task_id = None
+                st.rerun()
 
         # JavaScript to handle button clicks
         components.html("""

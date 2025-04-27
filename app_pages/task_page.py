@@ -29,6 +29,318 @@ from visualizations import (
 
 
 
+# Database Initialization
+def init_db():
+    conn = sqlite3.connect('project_management.db')
+    c = conn.cursor()
+    
+    # Recreate tables with ON DELETE CASCADE
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            name TEXT NOT NULL,
+            description TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            budget REAL,  
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    # Check if the budget column exists, and if not, add it
+    c.execute("PRAGMA table_info(projects)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'budget' not in column_names:
+        c.execute('ALTER TABLE projects ADD COLUMN budget REAL')  # Add budget column
+
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'Pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            deadline TEXT,
+            time_spent INTEGER DEFAULT 0,
+            priority TEXT DEFAULT 'Medium',
+            recurrence TEXT,
+            assigned_to INTEGER,
+            FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+            FOREIGN KEY (assigned_to) REFERENCES users (id)
+        )
+    ''')
+
+
+    
+    # Check if the actual_time_spent column exists, and if not, add to the tasks table:
+    c.execute("PRAGMA table_info(tasks)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+
+    if 'actual_time_spent' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_time_spent REAL')  # Add actual_time_spent column
+       
+    
+    # Check if the start_date column exists, and if not, add it
+    c.execute("PRAGMA table_info(tasks)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+
+    if 'start_date' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN start_date TEXT') 
+
+    # In the init_db function, add these columns to the tasks table:
+    if 'actual_start_date' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_start_date TEXT')  
+    if 'actual_deadline' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_deadline TEXT')     
+        
+        # Check if the budget column exists, and if not, add it
+    c.execute("PRAGMA table_info(tasks)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'budget' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN budget REAL') 
+
+
+    # Check if the actual_cost and budget_variance columns exist, and if not, add them
+    c.execute("PRAGMA table_info(tasks)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'actual_cost' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN actual_cost REAL')  # Add actual_cost column
+    
+    if 'budget_variance' not in column_names:
+        c.execute('ALTER TABLE tasks ADD COLUMN budget_variance REAL')  # Add budget_variance column
+
+
+
+
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            depends_on_task_id INTEGER,
+            FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+            FOREIGN KEY (depends_on_task_id) REFERENCES tasks (id)
+        )
+    ''')
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            user_id INTEGER,
+            comment TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS project_team (
+            project_id INTEGER,
+            user_id INTEGER,
+            FOREIGN KEY (project_id) REFERENCES projects(id),
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            PRIMARY KEY (project_id, user_id)
+        )
+    ''')
+    
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS subtasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            title TEXT NOT NULL,
+            status TEXT DEFAULT 'Pending',
+            FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            file_name TEXT NOT NULL,
+            file_data BLOB NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    # Add this new table for storing app settings
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            setting_name TEXT UNIQUE,
+            setting_value BLOB
+        )
+    ''')
+
+    # Create users table with additional columns
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'User',  -- Default role is 'User'
+            first_name TEXT,  -- New: First Name
+            last_name TEXT,   -- New: Last Name
+            company TEXT,     -- New: Company
+            job_title TEXT,   -- New: Job Title
+            department TEXT,  -- New: Department
+            email TEXT,       -- New: Email
+            phone TEXT        -- New: Phone
+            profile_picture BLOB  -- New: Profile Picture (stored as binary data)  
+            last_login TEXT,  -- New: Last login timestamp
+            login_count INTEGER DEFAULT 0,  -- New: Total logins
+            is_active BOOLEAN DEFAULT 1  -- New: Active status
+              
+        )
+    ''')
+
+    # Create table discussion topics
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS discussion_topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            topic TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        
+         )
+    ''')
+    
+    # Create table discussion messages
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS discussion_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (topic_id) REFERENCES discussion_topics(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        
+         )
+    ''')
+
+
+
+
+    # Check if the project_id column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'project_id' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN project_id INTEGER') 
+
+
+    # Check if the uploaded_by column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'uploaded_by' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_by INTEGER') 
+
+
+    # Check if the uploader_name column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'uploader_name' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploader_name TEXT')  
+
+
+    # Check if the uploaded_at column exists, and if not, add it
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'uploaded_at' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_at TEXT')
+
+
+
+
+    # Check if the new columns exist, and if not, add them
+    c.execute("PRAGMA table_info(users)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    new_columns = {
+        "first_name": "TEXT",
+        "last_name": "TEXT",
+        "company": "TEXT",
+        "job_title": "TEXT",
+        "department": "TEXT",
+        "email": "TEXT",
+        "phone": "TEXT",
+        "profile_picture":"BLOB"
+    }
+    
+    for column_name, column_type in new_columns.items():
+        if column_name not in column_names:
+            c.execute(f'ALTER TABLE users ADD COLUMN {column_name} {column_type}')
+
+    
+
+
+
+    # Check if the uploaded_by, uploaded_at and file_size columns exist, and if not, add them
+    c.execute("PRAGMA table_info(attachments)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+    
+    if 'uploaded_by' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_by INTEGER')  # Add uploaded_by column
+    
+    if 'uploaded_at' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN uploaded_at ')  # Add uploaded_at column
+
+    if 'file_size' not in column_names:
+        c.execute('ALTER TABLE attachments ADD COLUMN file_size INTEGER')  # Add file_size column
+
+
+
+    conn.commit()
+    conn.close()
+
+
+
+# Query Database
+def query_db(query, args=(), one=False):
+    conn = sqlite3.connect('project_management.db')
+    cur = conn.cursor()
+    
+    # Debugging: Print the query and arguments
+    print("Executing Query:", query)
+    print("Query Arguments:", args)
+    
+    cur.execute(query, args)
+    rv = cur.fetchall()
+    conn.commit()
+    conn.close()
+    return (rv[0] if rv else None) if one else rv
+
+# Initialize the database
+init_db()
+
 
     # Tasks Page
     elif page == "Tasks":
