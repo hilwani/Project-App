@@ -1032,12 +1032,6 @@ if "editing_task_id" not in st.session_state:
     st.session_state.editing_task_id = None
 if "editing_task_project" not in st.session_state:
     st.session_state.editing_task_project = None
-# if 'page_navigation' not in st.session_state:
-#     st.session_state.page_navigation = None
-
-# if 'username' not in st.session_state:
-#     st.session_state.username = None
-
 if "show_welcome" not in st.session_state:
     st.session_state.show_welcome = True
 if "color_scheme" not in st.session_state:
@@ -2125,13 +2119,6 @@ def display_user_profile(user_id):
 
 
 
-
-
-
-
-
-
-
 # Breadcrumbs Functionality
 def update_breadcrumbs(page):
     """Update the breadcrumbs in session state."""
@@ -2163,8 +2150,6 @@ def get_logo_from_db():
         one=True
     )
     return result[0] if result else None
-
-
 
 
 
@@ -2257,6 +2242,7 @@ if not st.session_state.authenticated:
 else:
     
     # Main App
+    # Main App
     if 'page' not in st.session_state:
         st.session_state.page = "Dashboard"
 
@@ -2272,26 +2258,68 @@ else:
         else:
             welcome_name = "there"
         
-        # Create a nice welcome container
-        with st.container():
-            st.markdown(f"""
-            <div style="
-                background-color: #E1F0FF;
-                padding: 1.5rem;
-                border-radius: 10px;
-                border-left: 5px solid #4E8BF5;
-                margin-bottom: 1.5rem;
-            ">
-                <h3 style="color: #2c3e50; margin-top: 0;">🎉 Welcome back, {welcome_name}!</h3>
-                <p style="margin-bottom: 0.5rem;">You're logged in as <strong>{st.session_state.user_role}</strong>.</p>
-                <p style="margin-bottom: 0;">Let's get productive! 🚀</p>
-            </div>
+        # Create columns for centering
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            # Create container with button inside
+            container = st.container(border=True)
+            with container:
+                # Welcome message content
+                st.markdown(f"""
+                <div style="
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.5rem;
+                    margin-bottom: 0.5rem;
+                ">
+                    <div style="
+                        display: flex;
+                        align-items: center;
+                        gap: 0.5rem;
+                    ">
+                        <h3 style="
+                            color: #2c3e50; 
+                            margin: 0;
+                            font-size: 1rem;
+                            font-weight: 600;
+                            white-space: nowrap;
+                        ">
+                            👋 Welcome, {welcome_name}
+                        </h3>
+                    </div>
+                    <div>
+                        <span style="
+                            background: #f0f4f8;
+                            color: #4E8BF5;
+                            padding: 0.15rem 0.5rem;
+                            border-radius: 10px;
+                            font-size: 0.7rem;
+                            font-weight: 500;
+                        ">
+                            {st.session_state.user_role}
+                        </span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Button placed inside the container
+                if st.button("Got it", key="dismiss_welcome"):
+                    st.session_state.show_welcome = False
+                    st.rerun()
+
+            # Custom styling for the container
+            st.markdown("""
+            <style>
+                div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
+                    padding: 1rem;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+                    border: 1px solid #e1e4e8 !important;
+                    background: white;
+                    width: 100%;
+                }
+            </style>
             """, unsafe_allow_html=True)
-            
-            # Add a button to dismiss the message
-            if st.button("Got it!", key="dismiss_welcome"):
-                st.session_state.show_welcome = False
-                st.rerun()
 
     page = st.session_state.page
     
@@ -5206,6 +5234,11 @@ else:
                         is_overdue = (datetime.strptime(task[6], "%Y-%m-%d").date() < datetime.today().date() 
                                     if task[6] else False) and task[4] != "Completed"
                         
+                        # Get assigned user's name
+                        assigned_to_id = task[10]
+                        assigned_user = query_db("SELECT username FROM users WHERE id = ?", (assigned_to_id,), one=True)
+                        assigned_to_name = assigned_user[0] if assigned_user else "Unassigned"
+                        
                         # Get the current column (0, 1, or 2)
                         col = cols[i % 3]
                         
@@ -5221,10 +5254,8 @@ else:
                                 f'<p><strong>Status:</strong> {task[4]} {"⚠️ OVERDUE" if is_overdue else ""}</p>'
                                 f'<p><strong>Priority:</strong> <span style="color:{priority_colors.get(task[8], "#000000")}">{task[8]}</span></p>'
                                 f'<p><strong>Deadline:</strong> {task[6]}</p>'
-                                f'<p><strong>Description:</strong></p>'
-                                f'<div style="background:#f8f9fa; padding:10px; border-radius:4px; margin:5px 0;">'
-                                f'{task[3] or "No description provided"}'
-                                f'</div>'
+                                f'<p><strong>Budget:</strong> ${task[12]}</p>'
+                                f'<p><strong>Assigned to: </strong>{assigned_to_name}</p>'
                                 f'<div style="display:flex; justify-content:space-between; margin-top:15px;">',
                                 unsafe_allow_html=True
                             )
