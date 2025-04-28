@@ -6,7 +6,8 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 import hashlib
-from components.drag_and_drop import drag_and_drop
+import numpy as np
+import statsmodels.api as sm
 from streamlit_calendar import calendar
 from calendar_page import show_calendar_page
 from workspace_page import workspace_page
@@ -19,13 +20,285 @@ import plotly.graph_objects as go
 from visualizations import ( 
     plot_project_timeline, 
     plot_budget_comparison,
-    plot_completion_heatmap,
+    plot_completion_heatmap, 
     plot_duration_variance,
     plot_project_health,
     plot_plan_vs_actual_gantt, 
     plot_duration_variance,
     plot_duration_comparison 
 )
+
+# Page Config (MUST BE THE FIRST STREAMLIT COMMAND)
+st.set_page_config(page_title="Project Management App", layout="wide")
+
+
+# Add this after your page config
+components.html("""
+<script>
+    // Function to handle navigation from cards
+    function navigateToPage(page) {
+        window.parent.postMessage({
+            streamlit: {
+                type: 'streamlit:componentMessage',
+                data: {page: page}
+            }
+        }, '*');
+    }
+</script>
+""", height=0)
+
+
+
+# Add this right after the page config
+st.markdown("""
+<style>
+   /* Uniform button styling */
+    .stButton>button {
+        width: 200px !important;
+        height: 42px !important;
+        margin: 8px auto !important;
+        display: block !important;
+        background-color: #E1F0FF !important;
+        color: #2c3e50 !important;
+        border: 1px solid #B8D4FF !important;
+        border-radius: 8px !important;
+        transition: all 0.2s ease !important;
+    }
+               
+            
+    .stButton>button:hover {
+        background-color: #D0E2FF !important;
+        transform: translateY(-1px) !important;
+    }
+    
+    .stButton>button[kind="primary"] {
+        background-color: #4E8BF5 !important;
+        color: white !important;
+        box-shadow: 0 2px 8px rgba(78, 139, 245, 0.3) !important;
+    }
+
+    /* Ensures all columns use same spacing */
+    [data-testid="column"] {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }        
+
+    /* Remove default sidebar padding */
+    [data-testid="stSidebar"] > div:first-child {
+        padding-top: 0 !important;
+    }
+    
+    /* Ensure title sticks to top */
+    .stSidebar .stMarkdown:first-child {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }        
+
+            /* Workspace icon styling */
+    .stButton>button[kind="secondary"] div div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+</style>
+""", unsafe_allow_html=True)
+
+
+
+
+# Define priority colors
+priority_colors = {
+            "High": "#FF0000",  # Red
+            "Medium": "#FFA500",  # Orange
+            "Low": "#32CD32"  # Green
+        }        
+
+
+# Initialize session state for color scheme
+if "color_scheme" not in st.session_state:
+    st.session_state.color_scheme = {
+        "primary": "#4E8BF5",  # Cool blue
+        "secondary": "#6BB9F0",  # Light blue
+        "background": "#F5F9FF",  # Very light blue
+        "text": "#333333",  # Dark gray for text
+        "card": "#FFFFFF",  # White for cards
+        "popup": "#FFFFFF"  # White for popups
+    }
+
+# Custom CSS
+custom_css = f"""
+<style>
+/* Profile section styling */
+    .sidebar-profile {{
+        display: flex;
+        align-items: center;
+        padding: 0.5rem 0;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid #e0e0e0;
+    }}
+    .profile-pic {{
+        border-radius: 50%;
+        object-fit: cover;
+        margin-right: 1rem;
+    }}
+    .profile-name {{
+        font-weight: 600;
+        margin-bottom: 0;
+    }}
+    .profile-role {{
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 0;
+    }}
+
+    /* General App Styling */
+    .stApp {{
+        background-color: {st.session_state.color_scheme['background']};
+        color: {st.session_state.color_scheme['text']};
+        font-family: 'Roboto', sans-serif;
+    }}
+
+    /* Card Styling */
+    .card {{
+        background-color: {st.session_state.color_scheme['background']};
+        border: 1px solid {st.session_state.color_scheme['primary']};
+        border-radius: 8px;
+        padding: 16px;
+        margin: 10px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }}
+
+    .card:hover {{
+        transform: translateY(-5px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }}
+
+    .card-title {{
+        color: {st.session_state.color_scheme['primary']};
+        font-size: 1.25rem;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }}
+
+    .card-content {{
+        color: {st.session_state.color_scheme['text']};
+        font-size: 0.9rem;
+        margin-bottom: 10px;
+    }}
+
+    .card-footer {{
+        margin-top: 10px;
+        font-size: 0.8rem;
+        color: {st.session_state.color_scheme['secondary']};
+    }}
+
+    /* Buttons */
+    .stButton>button {{
+        margin: 5px;
+    }}
+
+    /* Input Fields */
+    .stTextInput>div>div>input, .stTextArea>div>div>textarea {{
+        margin: 5px 0;
+    }}
+
+    /* Tables */
+    .stDataFrame {{
+        margin: 10px 0;
+    }}
+
+    /* Progress Bar */
+    .stProgress>div>div>div {{
+        margin: 5px 0;
+    }}
+
+    /* Media Queries for Responsive Design */
+    @media (max-width: 768px) {{
+        /* Adjust card layout for smaller screens */
+        .card {{
+            width: 100%;
+            margin: 10px 0;
+        }}
+
+        /* Make buttons full width on small screens */
+        .stButton>button {{
+            width: 100%;
+        }}
+
+        /* Adjust font sizes for smaller screens */
+        .card-title {{
+            font-size: 1rem;
+        }}
+
+        .card-content {{
+            font-size: 0.8rem;
+        }}
+
+        /* Stack columns vertically on small screens */
+        .stColumns {{
+            flex-direction: column;
+        }}
+
+    /* NEW TIMELINE VISUALIZATION STYLES */
+    .stPlotlyChart {{
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px;
+        background: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }}
+    .stDownloadButton>button {{
+        width: 100% !important;
+    }}
+
+    }}
+</style>
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
+
+
+# Add this to your existing CSS section (after the existing card styles)
+st.markdown("""
+<style>
+    /* Dashboard metric cards - matching admin style */
+    .dashboard-metric-card {
+        background-color: #FFFFFF;
+        border-radius: 10px;
+        padding: 1.2rem;
+        border-left: 4px solid;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        height: 100%;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    .dashboard-metric-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .dashboard-metric-card .metric-title {
+        display: flex; 
+        align-items: center; 
+        margin-bottom: 8px;
+    }
+    .dashboard-metric-card .metric-icon {
+        font-size: 1.5rem; 
+        margin-right: 8px;
+    }
+    .dashboard-metric-card .metric-name {
+        font-size: 0.9rem; 
+        color: #666;
+    }
+    .dashboard-metric-card .metric-value {
+        font-size: 1.8rem; 
+        font-weight: 700; 
+        color: #2c3e50; 
+        margin: 0;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 
@@ -239,6 +512,43 @@ def init_db():
 
 
 
+ # Update subtasks table with additional columns
+    c.execute("PRAGMA table_info(subtasks)")
+    columns = [column[1] for column in c.fetchall()]
+    
+    # Add missing columns if they don't exist
+    new_columns = {
+        "description": "TEXT",
+        "start_date": "TEXT",
+        "deadline": "TEXT",
+        "priority": "TEXT DEFAULT 'Medium'",
+        "assigned_to": "INTEGER",
+        "budget": "REAL",
+        "time_spent": "INTEGER DEFAULT 0"
+    }
+    
+    for column_name, column_type in new_columns.items():
+        if column_name not in columns:
+            c.execute(f"ALTER TABLE subtasks ADD COLUMN {column_name} {column_type}")
+
+
+    # In your init_db() function, add these columns if they don't exist
+    c.execute("PRAGMA table_info(subtasks)")
+    columns = [column[1] for column in c.fetchall()]
+
+    required_columns = {
+        "actual_cost": "REAL",
+        "actual_time_spent": "REAL",
+        "actual_start_date": "TEXT",
+        "actual_deadline": "TEXT"
+        
+    }
+
+    for col_name, col_type in required_columns.items():
+        if col_name not in columns:
+            c.execute(f"ALTER TABLE subtasks ADD COLUMN {col_name} {col_type}")
+
+
 
     # Check if the project_id column exists, and if not, add it
     c.execute("PRAGMA table_info(attachments)")
@@ -274,7 +584,15 @@ def init_db():
     
     if 'uploaded_at' not in column_names:
         c.execute('ALTER TABLE attachments ADD COLUMN uploaded_at TEXT')
-
+   
+   
+    # Check if the is_archived column exists, and if not, add it
+    # c.execute("PRAGMA table_info(discussion_topics)")
+    # columns = c.fetchall()
+    # column_names = [column[1] for column in columns]
+    
+    # if 'is_archieved' not in column_names:
+    #     c.execute('ALTER TABLE discussion_topics ADD COLUMN is_archived INTEGER DEFAULT 0') 
 
 
 
@@ -590,6 +908,11 @@ init_db()
                         is_overdue = (datetime.strptime(task[6], "%Y-%m-%d").date() < datetime.today().date() 
                                     if task[6] else False) and task[4] != "Completed"
                         
+                        # Get assigned user's name
+                        assigned_to_id = task[10]
+                        assigned_user = query_db("SELECT username FROM users WHERE id = ?", (assigned_to_id,), one=True)
+                        assigned_to_name = assigned_user[0] if assigned_user else "Unassigned"
+                        
                         # Get the current column (0, 1, or 2)
                         col = cols[i % 3]
                         
@@ -605,10 +928,8 @@ init_db()
                                 f'<p><strong>Status:</strong> {task[4]} {"⚠️ OVERDUE" if is_overdue else ""}</p>'
                                 f'<p><strong>Priority:</strong> <span style="color:{priority_colors.get(task[8], "#000000")}">{task[8]}</span></p>'
                                 f'<p><strong>Deadline:</strong> {task[6]}</p>'
-                                f'<p><strong>Description:</strong></p>'
-                                f'<div style="background:#f8f9fa; padding:10px; border-radius:4px; margin:5px 0;">'
-                                f'{task[3] or "No description provided"}'
-                                f'</div>'
+                                f'<p><strong>Budget:</strong> ${task[12]}</p>'
+                                f'<p><strong>Assigned to: </strong>{assigned_to_name}</p>'
                                 f'<div style="display:flex; justify-content:space-between; margin-top:15px;">',
                                 unsafe_allow_html=True
                             )
@@ -706,7 +1027,11 @@ init_db()
         tasks_df = display_task_table()
 
         # Simplified tabs without project filter
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Timeline", "Progress", "Priority Breakdown", "Budget Tracking", "Budget Variance", "Workload"])
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Timeline", "Progress", "Priority Breakdown", 
+    "Budget Tracking", "Budget Variance", "Workload", 
+    "Subtask Analytics"
+        ])
 
         with tab1:
             st.markdown("""
@@ -740,5 +1065,8 @@ init_db()
 
         with tab6:
             plot_assignee_workload(tasks_df)
+
+        with tab7:
+            plot_subtask_analytics(tasks_df)
 
 

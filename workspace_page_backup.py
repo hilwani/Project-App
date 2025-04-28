@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st 
 import sqlite3
  
-# Database connection function
+# Database connection function 
 def get_db_connection():
     conn = sqlite3.connect('project_management.db')
     conn.row_factory = sqlite3.Row
@@ -117,7 +117,7 @@ def edit_task_in_workspace(task_id, project_id=None):
             actual_time = st.number_input(
                 "Actual Time Spent (Hours)",
                 min_value=0.0,
-                value=float(task[16]) if len(task) > 16 and task[16] is not None and str(task[16]).replace('.', '', 1).isdigit() else 0.0,
+                value=float(task[17]) if len(task) > 17 and task[17] is not None and str(task[17]).replace('.', '', 1).isdigit() else 0.0,
                 step=0.5
             )
 
