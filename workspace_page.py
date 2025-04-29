@@ -291,118 +291,130 @@ def edit_task_in_workspace(task_id, project_id=None):
         )
         
         # Subtask management
+        # Subtask management
         st.markdown("---")
         st.subheader("Manage Subtask")
         
-        selected_subtask = st.selectbox(
-            "Select Subtask to Manage",
-            [f"{subtask[0]}: {subtask[1]}" for subtask in subtasks],
-            index=0,
-            key="subtask_selector"
-        )
-        
-        if selected_subtask:
-            subtask_id = int(selected_subtask.split(":")[0])
-            subtask = next((s for s in subtasks if s[0] == subtask_id), None)
+        if subtasks:
+            selected_subtask = st.selectbox(
+                "Select Subtask to Manage",
+                [f"{subtask[0]}: {subtask[1]}" for subtask in subtasks],
+                index=0,
+                key="subtask_selector"
+            )
             
-            if subtask:
-                # Edit Subtask Form
-                with st.form(key=f"edit_subtask_{subtask_id}"):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        subtask_title = st.text_input("Title", value=subtask[1], key=f"title_{subtask_id}")
-                        subtask_description = st.text_area(
-                            "Description", 
-                            value=subtask[2] or "",
-                            key=f"desc_{subtask_id}"
-                        )
+            if selected_subtask:
+                subtask_id = int(selected_subtask.split(":")[0])
+                subtask = next((s for s in subtasks if s[0] == subtask_id), None)
+                
+                if subtask:
+                    with st.form(key=f"edit_subtask_{subtask_id}"):
+                        col1, col2 = st.columns(2)
                         
-                        status_col, priority_col = st.columns(2)
-                        with status_col:
-                            subtask_status = st.selectbox(
-                                "Status", 
-                                ["Pending", "In Progress", "Completed"], 
-                                index=["Pending", "In Progress", "Completed"].index(subtask[3]),
-                                key=f"status_{subtask_id}"
+                        with col1:
+                            subtask_title = st.text_input("Title", value=subtask[1], key=f"title_{subtask_id}")
+                            subtask_description = st.text_area(
+                                "Description", 
+                                value=subtask[2] or "",
+                                placeholder="Enter detailed description...",
+                                key=f"desc_{subtask_id}"
                             )
-                        with priority_col:
-                            subtask_priority = st.selectbox(
-                                "Priority", 
-                                ["High", "Medium", "Low"], 
-                                index=["High", "Medium", "Low"].index(subtask[6]),
-                                key=f"priority_{subtask_id}"
+                            
+                            status_col, priority_col = st.columns(2)
+                            with status_col:
+                                subtask_status = st.selectbox(
+                                    "Status", 
+                                    ["Pending", "In Progress", "Completed"], 
+                                    index=["Pending", "In Progress", "Completed"].index(subtask[3]),
+                                    key=f"status_{subtask_id}"
+                                )
+                            with priority_col:
+                                subtask_priority = st.selectbox(
+                                    "Priority", 
+                                    ["High", "Medium", "Low"], 
+                                    index=["High", "Medium", "Low"].index(subtask[6]),
+                                    key=f"priority_{subtask_id}"
+                                )
+                        
+                        with col2:
+                            date_col1, date_col2 = st.columns(2)
+                            with date_col1:
+                                subtask_start_date = st.date_input(
+                                    "Start Date", 
+                                    value=datetime.strptime(subtask[4], "%Y-%m-%d").date() if subtask[4] else start_date,
+                                    key=f"start_{subtask_id}"
+                                )
+                            with date_col2:
+                                subtask_deadline = st.date_input(
+                                    "Deadline", 
+                                    value=datetime.strptime(subtask[5], "%Y-%m-%d").date() if subtask[5] else deadline,
+                                    key=f"deadline_{subtask_id}"
+                                )
+                            
+                            subtask_budget = st.number_input(
+                                "Budget ($)", 
+                                min_value=0.0, 
+                                value=float(subtask[8] or 0), 
+                                step=0.01,
+                                placeholder="Enter budget amount...",
+                                key=f"budget_{subtask_id}"
                             )
-                    
-                    with col2:
-                        date_col1, date_col2 = st.columns(2)
-                        with date_col1:
-                            subtask_start_date = st.date_input(
-                                "Start Date", 
-                                value=datetime.strptime(subtask[4], "%Y-%m-%d").date() if subtask[4] else start_date,
-                                key=f"start_{subtask_id}"
+                            
+                            subtask_time_spent = st.number_input(
+                                "Time Spent (hours)", 
+                                min_value=0.0, 
+                                value=float(subtask[9] or 0),
+                                step=0.5,
+                                placeholder="Enter hours worked...",
+                                key=f"time_{subtask_id}"
                             )
-                        with date_col2:
-                            subtask_deadline = st.date_input(
-                                "Deadline", 
-                                value=datetime.strptime(subtask[5], "%Y-%m-%d").date() if subtask[5] else deadline,
-                                key=f"deadline_{subtask_id}"
+                            
+                            team_members = query_db("SELECT id, username FROM users ORDER BY username")
+                            assignee_options = ["Unassigned"] + [member[1] for member in team_members]
+                            
+                            current_assignee = "Unassigned"
+                            if subtask[7]:  # If there's an assigned_to value
+                                current_assignee = subtask[10] if subtask[10] else "Unassigned"
+                            
+                            subtask_assigned_to = st.selectbox(
+                                "Assign To", 
+                                assignee_options,
+                                index=assignee_options.index(current_assignee) if current_assignee in assignee_options else 0,
+                                key=f"assignee_{subtask_id}"
                             )
                         
-                        subtask_budget = st.number_input(
-                            "Budget ($)", 
-                            min_value=0.0, 
-                            value=float(subtask[8] or 0), 
-                            step=0.01,
-                            key=f"budget_{subtask_id}"
-                        )
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("Update Subtask"):
+                                try:
+                                    assigned_to_id = None
+                                    if subtask_assigned_to != "Unassigned":
+                                        assigned_to_id = query_db(
+                                            "SELECT id FROM users WHERE username = ?", 
+                                            (subtask_assigned_to,), 
+                                            one=True
+                                        )[0]
+                                    
+                                    query_db("""
+                                        UPDATE subtasks 
+                                        SET title=?, description=?, status=?, start_date=?, deadline=?, 
+                                        priority=?, assigned_to=?, budget=?, time_spent=?
+                                        WHERE id=?
+                                    """, (
+                                        subtask_title, subtask_description, subtask_status, 
+                                        subtask_start_date, subtask_deadline, subtask_priority, 
+                                        assigned_to_id, subtask_budget, subtask_time_spent, subtask_id
+                                    ))
+                                    st.success("Subtask updated successfully!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error updating subtask: {str(e)}")
                         
-                        team_members = query_db("SELECT id, username FROM users ORDER BY username")
-                        assignee_options = ["Unassigned"] + [member[1] for member in team_members]
-                        
-                        current_assignee = "Unassigned"
-                        if subtask[7]:
-                            current_assignee = subtask[10] if subtask[10] else "Unassigned"
-                        
-                        subtask_assigned_to = st.selectbox(
-                            "Assign To", 
-                            assignee_options,
-                            index=assignee_options.index(current_assignee) if current_assignee in assignee_options else 0,
-                            key=f"assignee_{subtask_id}"
-                        )
-                    
-                    # Action buttons in the same form
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.form_submit_button("Update Subtask"):
-                            try:
-                                assigned_to_id = None
-                                if subtask_assigned_to != "Unassigned":
-                                    assigned_to_id = query_db(
-                                        "SELECT id FROM users WHERE username = ?", 
-                                        (subtask_assigned_to,), 
-                                        one=True
-                                    )[0]
-                                
-                                query_db("""
-                                    UPDATE subtasks 
-                                    SET title=?, description=?, status=?, start_date=?, deadline=?, 
-                                    priority=?, assigned_to=?, budget=?
-                                    WHERE id=?
-                                """, (
-                                    subtask_title, subtask_description, subtask_status, 
-                                    subtask_start_date, subtask_deadline, subtask_priority, 
-                                    assigned_to_id, subtask_budget, subtask_id
-                                ))
-                                st.success("Subtask updated successfully!")
-                                time.sleep(0.3)  # Small delay to ensure UI updates
-                                st.rerun()  # Force immediate refresh
-                            except Exception as e:
-                                st.error(f"Error updating subtask: {str(e)}")
-                                            
-                    with col2:
-                        if st.form_submit_button("Delete Subtask"):
-                            st.session_state.subtask_actions['confirm_delete'] = subtask_id
+                        with col2:
+                            if st.form_submit_button("Delete Subtask"):
+                                st.session_state.subtask_actions['confirm_delete'] = subtask_id
+
+
     
     # Delete confirmation (outside any form)
     if st.session_state.subtask_actions['confirm_delete']:
@@ -420,6 +432,7 @@ def edit_task_in_workspace(task_id, project_id=None):
                 st.rerun()
     
     # Create New Subtask Section
+    # Add new subtask section
     st.markdown("---")
     st.subheader("Create New Subtask")
     
@@ -427,12 +440,12 @@ def edit_task_in_workspace(task_id, project_id=None):
         st.session_state.subtask_actions['show_subtask_form'] = not st.session_state.subtask_actions['show_subtask_form']
     
     if st.session_state.subtask_actions['show_subtask_form']:
-        with st.form(key="new_subtask_form"):
+        with st.form(key="new_subtask_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
             with col1:
                 new_subtask_title = st.text_input("Title*", placeholder="Enter subtask name", key="new_subtask_title")
-                new_subtask_description = st.text_area("Description", placeholder="Enter subtask description", key="new_subtask_desc")
+                new_subtask_description = st.text_area("Description", placeholder="Enter detailed description...", key="new_subtask_desc")
                 
                 status_col, priority_col = st.columns(2)
                 with status_col:
@@ -447,7 +460,19 @@ def edit_task_in_workspace(task_id, project_id=None):
                 with date_col2:
                     new_subtask_deadline = st.date_input("Deadline", value=deadline, key="new_subtask_deadline")
                 
-                new_subtask_budget = st.number_input("Budget ($)", min_value=0.0, value=0.0, step=0.01, key="new_subtask_budget")
+                new_subtask_budget = st.number_input("Budget ($)", 
+                                                   min_value=0.0, 
+                                                   value=0.0, 
+                                                   step=0.01, 
+                                                   key="new_subtask_budget",
+                                                   placeholder="Enter budget amount...")
+                
+                new_subtask_time_spent = st.number_input("Time Spent (hours)", 
+                                                       min_value=0.0, 
+                                                       value=0.0, 
+                                                       step=0.5,
+                                                       key="new_subtask_time",
+                                                       placeholder="Enter hours worked...")
                 
                 team_members = query_db("SELECT id, username FROM users ORDER BY username")
                 new_subtask_assigned_to = st.selectbox(
@@ -475,12 +500,12 @@ def edit_task_in_workspace(task_id, project_id=None):
                         query_db("""
                             INSERT INTO subtasks 
                             (task_id, title, description, status, start_date, deadline, 
-                             priority, assigned_to, budget)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             priority, assigned_to, budget, time_spent)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             task_id, new_subtask_title.strip(), new_subtask_description, 
                             new_subtask_status, new_subtask_start_date, new_subtask_deadline,
-                            new_subtask_priority, assigned_to_id, new_subtask_budget
+                            new_subtask_priority, assigned_to_id, new_subtask_budget, new_subtask_time_spent
                         ))
                         st.success("Subtask created successfully!")
                         st.session_state.subtask_actions['show_subtask_form'] = False
@@ -695,7 +720,6 @@ def workspace_page():
     with tab1:  # Task Management
         st.subheader("Task Management")
         
-        # Initialize session state and variables
         if 'show_task_form' not in st.session_state:
             st.session_state.show_task_form = False
         if 'editing_task_id' not in st.session_state:
@@ -708,40 +732,31 @@ def workspace_page():
             key="task_view"
         )
         
-        # Fetch tasks from database (for all views)
+        # Fetch tasks from database
         tasks = query_db("""
             SELECT id, title, description, status, priority, start_date, deadline, assigned_to 
             FROM tasks 
             WHERE project_id = ?
         """, (selected_project_id,)) or []
         
-        # Show form if in edit/create mode
-        # In your workspace_page() function, in the task management section:
         if st.session_state.show_task_form:
             if st.session_state.editing_task_id:
-                result = edit_task_in_workspace(st.session_state.editing_task_id, selected_project_id)
-                if result is not None:  # Only reset if we got a definitive response
-                    st.session_state.show_task_form = False
-                    st.session_state.editing_task_id = None
-                    if result:  # If save was successful
-                        st.rerun()
+                edit_task_in_workspace(st.session_state.editing_task_id, selected_project_id)
             else:
                 render_task_form(edit_mode=False, project_id=selected_project_id)
         else:
-            # List View
             if view_option == "List":
                 st.write("### Task List")
 
-                # Define status colors to match Kanban board
-                # Define status colors to match Kanban board (ADD THIS)
+                # Status color configuration
                 status_config = {
                     "Pending": {"color": "#FFA07A", "bg_color": "#FFF5F0", "icon": "⏳"},
                     "In Progress": {"color": "#1E90FF", "bg_color": "#F0F8FF", "icon": "🚧"},
                     "Completed": {"color": "#3CB371", "bg_color": "#F0FFF0", "icon": "✅"},
                     "On Hold": {"color": "#FFD700", "bg_color": "#FFF9E6", "icon": "⏸️"}
                 }
-                            
-                # Only show Add button for project owners
+
+                # Add New Task button for project owners
                 if is_project_owner and st.button("➕ Add New Task", key="add_new_task_btn"):
                     st.session_state.show_task_form = True
                     st.session_state.editing_task_id = None
@@ -750,80 +765,83 @@ def workspace_page():
                 if not tasks:
                     st.info("No tasks found for this project")
                 else:
-                    for task in tasks:
-                        task_status = task[3]
-                        status_style = status_config.get(task_status, {})
+                    # Create rows of 3 tasks each
+                    for i in range(0, len(tasks), 3):
+                        row_tasks = tasks[i:i+3]
+                        cols = st.columns(3, gap="large")  # Increased gap between cards
                         
-                        # Create a container with custom styling
-                        with st.container():
-                            # Apply the status color as a left border
-                            st.markdown(
-                                f"""
-                                <style>
-                                    div[data-testid="stExpander"] {{
+                        for j, task in enumerate(row_tasks):
+                            task_id, title, description, status, priority, start_date, deadline, assigned_to = task
+                            status_style = status_config.get(status, {})
+                            
+                            with cols[j]:
+                                # Card container
+                                st.markdown(
+                                    f"""
+                                    <div style="
                                         border-left: 4px solid {status_style.get('color', '#CCCCCC')};
-                                        padding-left: 12px;
-                                    }}
-                                    div[data-testid="stExpander"] div[role="button"] p {{
-                                        font-weight: 600;
-                                        color: #333;
-                                    }}
-                                </style>
-                                """,
-                                unsafe_allow_html=True
-                            )
-                            
-                            # Create the expander
-                            with st.expander(f"{status_style.get('icon', '')} {task[1]} - {task_status}"):
-                                # Task details
-                                st.write(f"**Description:** {task[2]}")
-                                st.write(f"**Priority:** {task[4]}")
-                                st.write(f"**Status:** {task_status}")
-                                st.write(f"**Start Date:** {task[5]}")
-                                st.write(f"**Deadline:** {task[6]}")
+                                        padding: 16px;
+                                        margin-bottom: 20px;
+                                        border-radius: 6px;
+                                        background-color: {status_style.get('bg_color', '#FFFFFF')};
+                                        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                                        height: 100%;
+                                    ">
+                                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                                            <h3 style="margin: 0 0 8px 0; color: #333; font-size: 1.1rem;">{status_style.get('icon', '')} {title}</h3>
+                                            <span style="
+                                                padding: 4px 8px;
+                                                border-radius: 12px;
+                                                font-size: 0.75em;
+                                                background-color: {'#ffcccc' if priority == 'High' else '#fff3cd' if priority == 'Medium' else '#e6ffe6'};
+                                            ">{priority}</span>
+                                        </div>
+                                        <p style="margin: 0 0 12px 0; color: #555; font-size: 0.9rem; min-height: 40px;">
+                                            {description or 'No description'}
+                                        </p>
+                                        <div style="font-size: 0.8rem; color: #666; margin-bottom: 8px;">
+                                            <div style="margin-bottom: 4px;">📅 <strong>Start:</strong> {start_date if start_date else 'Not set'}</div>
+                                            <div style="margin-bottom: 4px;">⏱️ <strong>Deadline:</strong> {deadline if deadline else 'Not set'}</div>
+                                            <div>👤 <strong>Assigned:</strong> {query_db('SELECT username FROM users WHERE id=?', (assigned_to,), one=True)[0] if assigned_to else 'Unassigned'}</div>
+                                        </div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
                                 
-                                if task[7]:
-                                    assigned_to = query_db("SELECT username FROM users WHERE id=?", (task[7],), one=True)
-                                    st.write(f"**Assigned To:** {assigned_to[0] if assigned_to else 'Unassigned'}")
-
-                                # Rest of your action buttons code...
-
-                            # Action buttons - check permissions
-                            cols = st.columns([1,1,2])
-                            
-                            # Check if user can edit this task
-                            can_edit_task = (is_project_owner or 
-                                            (task[7] and task[7] == st.session_state.user_id))
-                            
-                            with cols[0]:
-                                if can_edit_task and st.button("✏️ Edit", key=f"edit_{task[0]}", 
-                                        use_container_width=True):
-                                    st.session_state.editing_task_id = task[0]  # Set the task_id here
-                                    st.session_state.show_task_form = True
-                                    st.rerun()
-                            
-                            with cols[1]:
-                                # Only project owners can delete
-                                if is_project_owner and st.button("🗑️ Delete", key=f"delete_{task[0]}", 
-                                        type="secondary", use_container_width=True):
-                                    st.session_state.task_to_delete = task[0]
-                            
-                            # Delete confirmation (only shown if project owner)
-                            if is_project_owner and 'task_to_delete' in st.session_state and st.session_state.task_to_delete == task[0]:
-                                st.warning("Are you sure you want to delete this task?")
-                                confirm_cols = st.columns([1,1,2])
-                                with confirm_cols[0]:
-                                    if st.button("✅ Yes", key=f"confirm_{task[0]}",
-                                            type="primary", use_container_width=True):
-                                        query_db("DELETE FROM tasks WHERE id=?", (task[0],))
-                                        st.success("Task deleted successfully!")
-                                        del st.session_state.task_to_delete
-                                        st.rerun()
-                                with confirm_cols[1]:
-                                    if st.button("❌ Cancel", key=f"cancel_{task[0]}",
-                                            type="secondary", use_container_width=True):
-                                        del st.session_state.task_to_delete
-                                        st.rerun()
+                                # Action buttons container
+                                with st.container():
+                                    col1, col2 = st.columns(2)
+                                    
+                                    # Check if user can edit this task
+                                    can_edit_task = (is_project_owner or 
+                                                    (assigned_to and assigned_to == st.session_state.user_id))
+                                    
+                                    with col1:
+                                        if can_edit_task and st.button("Edit", key=f"edit_{task_id}", use_container_width=True):
+                                            st.session_state.editing_task_id = task_id
+                                            st.session_state.show_task_form = True
+                                            st.rerun()
+                                    
+                                    with col2:
+                                        # Only project owners can delete
+                                        if is_project_owner and st.button("Delete", key=f"delete_{task_id}", type="secondary", use_container_width=True):
+                                            st.session_state.task_to_delete = task_id
+                                    
+                                    # Delete confirmation (only shown if project owner)
+                                    if is_project_owner and 'task_to_delete' in st.session_state and st.session_state.task_to_delete == task_id:
+                                        st.warning("Delete this task?")
+                                        confirm_col1, confirm_col2 = st.columns(2)
+                                        with confirm_col1:
+                                            if st.button("Yes", key=f"confirm_{task_id}", use_container_width=True):
+                                                query_db("DELETE FROM tasks WHERE id=?", (task_id,))
+                                                st.success("Task deleted!")
+                                                del st.session_state.task_to_delete
+                                                st.rerun()
+                                        with confirm_col2:
+                                            if st.button("No", key=f"cancel_{task_id}", use_container_width=True):
+                                                del st.session_state.task_to_delete
+                                                st.rerun()
 
 
 
