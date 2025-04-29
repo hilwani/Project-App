@@ -1842,112 +1842,156 @@ def workspace_page():
         else:
             st.info("No discussion topics yet. Start one by clicking 'New Topic'")
 
-    with tab4:
+    ####
+    with tab4:  # Timeline Tab
         st.subheader("Project Timeline")
         
-        tasks = query_db("""
+        # Get all tasks with their planned and actual dates - maintaining the same sorting as Tasks tab
+        tasks_data = query_db("""
             SELECT 
-                t.id, t.title, t.description, t.status, 
-                t.start_date, t.deadline, 
-                t.actual_start_date, t.actual_deadline,
-                t.priority, u.username
+                t.id as task_id, 
+                t.title as task_title,
+                t.start_date as planned_start,
+                t.deadline as planned_end,
+                t.actual_start_date as actual_start,
+                t.actual_deadline as actual_end,
+                t.status as task_status,
+                t.priority as task_priority,
+                u.username as assignee
             FROM tasks t
             LEFT JOIN users u ON t.assigned_to = u.id
             WHERE t.project_id = ?
+            ORDER BY
+                CASE WHEN t.start_date IS NULL THEN 1 ELSE 0 END,
+                t.start_date ASC,
+                t.id
         """, (selected_project_id,)) or []
         
-        #
-        if tasks:
+        if tasks_data:
+            # Prepare data for Gantt chart - maintaining task order but with both timelines
             gantt_data = []
-            for task in tasks:
-                # Planned timeline
-                planned_start = pd.to_datetime(task[4]) if task[4] else None
-                planned_end = pd.to_datetime(task[5]) if task[5] else None
+            row_mapping = {}
+            current_row = 0
+            
+            for task in tasks_data:
+                task_id, title, planned_start, planned_end, actual_start, actual_end, status, priority, assignee = task
                 
-                # Actual timeline
-                actual_start = pd.to_datetime(task[6]) if task[6] else None
-                actual_end = pd.to_datetime(task[7]) if task[7] else None
+                # Convert dates - same handling as Tasks tab
+                planned_start = pd.to_datetime(planned_start) if planned_start else pd.to_datetime('today')
+                planned_end = pd.to_datetime(planned_end) if planned_end else planned_start + pd.Timedelta(days=1)
+                actual_start = pd.to_datetime(actual_start) if actual_start else None
+                actual_end = pd.to_datetime(actual_end) if actual_end else None
                 
-                if planned_start and planned_end:
-                    gantt_data.append({
-                        "Task": task[1],
-                        "Start": planned_start,
-                        "Finish": planned_end,
-                        "Timeline": "Planned",
-                        "Status": task[3],
-                        "Priority": task[8],
-                        "Assignee": task[9] or "Unassigned"
-                    })
+                # Maintain same row numbering as Tasks tab
+                row_mapping[task_id] = current_row
+                current_row += 1
                 
+                # Add planned timeline (always shown)
+                gantt_data.append({
+                    "Task": title,
+                    "Start": planned_start,
+                    "Finish": planned_end,
+                    "Timeline": "Planned",
+                    "Status": status,
+                    "Priority": priority,
+                    "Assignee": assignee or "Unassigned",
+                    "Row": row_mapping[task_id],
+                    "Color": "lightgray"
+                })
+                
+                # Add actual timeline if available
                 if actual_start and actual_end:
                     gantt_data.append({
-                        "Task": task[1],
+                        "Task": title,
                         "Start": actual_start,
                         "Finish": actual_end,
                         "Timeline": "Actual",
-                        "Status": task[3],
-                        "Priority": task[8],
-                        "Assignee": task[9] or "Unassigned"
+                        "Status": status,
+                        "Priority": priority,
+                        "Assignee": assignee or "Unassigned",
+                        "Row": row_mapping[task_id],
+                        "Color": "blue"
                     })
-
-            #
+            
             if gantt_data:
                 gantt_df = pd.DataFrame(gantt_data)
                 
-                # Create figure using plotly express timeline
+                # Sort maintaining Tasks tab order
+                gantt_df = gantt_df.sort_values(by=['Row', 'Start'])
+                
+                # Create the Gantt chart with both timelines
                 fig = px.timeline(
                     gantt_df,
                     x_start="Start",
                     x_end="Finish",
-                    y="Task",
-                    color="Timeline",
+                    y="Row",  # Maintain Tasks tab ordering
+                    color="Timeline",  # Color by timeline type
                     color_discrete_map={
                         "Planned": "lightgray",
                         "Actual": "blue"
                     },
-                    hover_data=["Status", "Priority", "Assignee"],
+                    hover_data=["Task", "Status", "Priority", "Assignee"],
                     title="Project Timeline (Planned vs Actual)"
                 )
                 
-                # Add today's line - FIXED VERSION
-                today = pd.Timestamp.now().normalize()  # Get today's date at midnight
+                # Add today's line
+                today = pd.Timestamp.now().normalize()
                 fig.add_shape(
                     type="line",
                     x0=today,
                     x1=today,
                     y0=-0.5,
-                    y1=len(gantt_df['Task'].unique()) - 0.5,
+                    y1=current_row - 0.5,
                     line=dict(color="red", width=2, dash="dot")
                 )
                 
                 # Add today's annotation
                 fig.add_annotation(
                     x=today,
-                    y=len(gantt_df['Task'].unique()) - 0.5,
+                    y=current_row - 0.5,
                     text="Today",
                     showarrow=False,
                     yshift=10,
                     font=dict(color="red")
                 )
                 
-                # Update layout
-                fig.update_yaxes(
-                    categoryorder="total ascending",
-                    autorange="reversed"
-                )
+                # Custom y-axis labels to match task names
+                y_tick_text = [
+                    tasks_data[i][1] for i in range(len(row_mapping))  # Get task titles in order
+                ]
+                
                 fig.update_layout(
-                    height=600,
+                    yaxis=dict(
+                        tickmode='array',
+                        tickvals=list(range(len(row_mapping))),
+                        ticktext=y_tick_text,
+                        autorange="reversed"
+                    ),
+                    height=600 + len(row_mapping) * 30,
                     xaxis_title="Timeline",
-                    yaxis_title="Tasks",
                     hovermode="closest",
-                    showlegend=True,
-                    legend_title="Timeline Type"
+                    showlegend=True,  # Restored legend
+                    legend_title="Timeline Type",
+                    margin=dict(l=200, r=50, t=80, b=50)
+                )
+                
+                # Tooltip with clear date display
+                fig.update_traces(
+                    hovertemplate=(
+                        "<b>%{customdata[0]}</b><br>"
+                        "Status: %{customdata[1]}<br>"
+                        "Priority: %{customdata[2]}<br>"
+                        "Assignee: %{customdata[3]}<br>"
+                        "Start: %{x|%Y-%m-%d}<br>"
+                        "End: %{x_end|%Y-%m-%d}<extra></extra>"
+                    )
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
-
             else:
-                st.info("No tasks found for timeline visualization")
+                st.info("No tasks with valid dates to display")
+        else:
+            st.info("No tasks found for this project")
 
 
     with tab5:
