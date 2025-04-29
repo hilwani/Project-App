@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st 
 import sqlite3
+import time
  
 # Database connection function 
 def get_db_connection():
@@ -44,10 +45,10 @@ def sort_tasks(tasks):
     
     return sorted(tasks, key=get_sort_key)
 
-
+ 
 #
 def edit_task_in_workspace(task_id, project_id=None):
-    """Reusable edit task form for workspace page"""
+    """Reusable edit task form for workspace page with fully functional subtask integration"""
     task = query_db("""
         SELECT 
             t.id, t.project_id, t.title, t.description, t.status, 
@@ -67,6 +68,14 @@ def edit_task_in_workspace(task_id, project_id=None):
     if not task:
         st.error("Task not found in workspace")
         return False
+
+    # Initialize session state variables
+    if 'subtask_actions' not in st.session_state:
+        st.session_state.subtask_actions = {
+            'confirm_delete': None,
+            'show_subtask_form': False,
+            'editing_subtask': None
+        }
 
     with st.form(key=f"workspace_edit_task_{task_id}_form"):
         st.subheader(f"✏️ Edit Task: {task[2]}")
@@ -243,6 +252,244 @@ def edit_task_in_workspace(task_id, project_id=None):
             st.session_state.show_task_form = False
             st.session_state.editing_task_id = None
             st.rerun()
+    
+    # Subtask Section (outside the main form)
+    # Subtask Section
+    st.markdown("---")
+    st.subheader("Subtasks Management")
+    
+    # Get all subtasks
+    subtasks = query_db("""
+        SELECT s.id, s.title, s.description, s.status, s.start_date, s.deadline, 
+               s.priority, s.assigned_to, s.budget, s.time_spent, u.username
+        FROM subtasks s
+        LEFT JOIN users u ON s.assigned_to = u.id
+        WHERE s.task_id=?
+        ORDER BY s.id
+    """, (task_id,))
+    
+    if subtasks:
+        st.write("### Current Subtasks")
+        
+        # Display subtasks table
+        subtasks_df = pd.DataFrame(subtasks, columns=[
+            "ID", "Title", "Description", "Status", "Start Date", "Deadline",
+            "Priority", "Assigned To ID", "Budget", "Time Spent", "Assigned To"
+        ])
+        
+        st.dataframe(
+            subtasks_df[["ID", "Title", "Status", "Priority", "Assigned To", 
+                        "Start Date", "Deadline", "Budget", "Time Spent"]],
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Start Date": st.column_config.DateColumn("Start Date"),
+                "Deadline": st.column_config.DateColumn("Deadline"),
+                "Budget": st.column_config.NumberColumn("Budget", format="$%.2f"),
+                "Time Spent": st.column_config.NumberColumn("Time Spent (hrs)")
+            }
+        )
+        
+        # Subtask management
+        st.markdown("---")
+        st.subheader("Manage Subtask")
+        
+        selected_subtask = st.selectbox(
+            "Select Subtask to Manage",
+            [f"{subtask[0]}: {subtask[1]}" for subtask in subtasks],
+            index=0,
+            key="subtask_selector"
+        )
+        
+        if selected_subtask:
+            subtask_id = int(selected_subtask.split(":")[0])
+            subtask = next((s for s in subtasks if s[0] == subtask_id), None)
+            
+            if subtask:
+                # Edit Subtask Form
+                with st.form(key=f"edit_subtask_{subtask_id}"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        subtask_title = st.text_input("Title", value=subtask[1], key=f"title_{subtask_id}")
+                        subtask_description = st.text_area(
+                            "Description", 
+                            value=subtask[2] or "",
+                            key=f"desc_{subtask_id}"
+                        )
+                        
+                        status_col, priority_col = st.columns(2)
+                        with status_col:
+                            subtask_status = st.selectbox(
+                                "Status", 
+                                ["Pending", "In Progress", "Completed"], 
+                                index=["Pending", "In Progress", "Completed"].index(subtask[3]),
+                                key=f"status_{subtask_id}"
+                            )
+                        with priority_col:
+                            subtask_priority = st.selectbox(
+                                "Priority", 
+                                ["High", "Medium", "Low"], 
+                                index=["High", "Medium", "Low"].index(subtask[6]),
+                                key=f"priority_{subtask_id}"
+                            )
+                    
+                    with col2:
+                        date_col1, date_col2 = st.columns(2)
+                        with date_col1:
+                            subtask_start_date = st.date_input(
+                                "Start Date", 
+                                value=datetime.strptime(subtask[4], "%Y-%m-%d").date() if subtask[4] else start_date,
+                                key=f"start_{subtask_id}"
+                            )
+                        with date_col2:
+                            subtask_deadline = st.date_input(
+                                "Deadline", 
+                                value=datetime.strptime(subtask[5], "%Y-%m-%d").date() if subtask[5] else deadline,
+                                key=f"deadline_{subtask_id}"
+                            )
+                        
+                        subtask_budget = st.number_input(
+                            "Budget ($)", 
+                            min_value=0.0, 
+                            value=float(subtask[8] or 0), 
+                            step=0.01,
+                            key=f"budget_{subtask_id}"
+                        )
+                        
+                        team_members = query_db("SELECT id, username FROM users ORDER BY username")
+                        assignee_options = ["Unassigned"] + [member[1] for member in team_members]
+                        
+                        current_assignee = "Unassigned"
+                        if subtask[7]:
+                            current_assignee = subtask[10] if subtask[10] else "Unassigned"
+                        
+                        subtask_assigned_to = st.selectbox(
+                            "Assign To", 
+                            assignee_options,
+                            index=assignee_options.index(current_assignee) if current_assignee in assignee_options else 0,
+                            key=f"assignee_{subtask_id}"
+                        )
+                    
+                    # Action buttons in the same form
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.form_submit_button("Update Subtask"):
+                            try:
+                                assigned_to_id = None
+                                if subtask_assigned_to != "Unassigned":
+                                    assigned_to_id = query_db(
+                                        "SELECT id FROM users WHERE username = ?", 
+                                        (subtask_assigned_to,), 
+                                        one=True
+                                    )[0]
+                                
+                                query_db("""
+                                    UPDATE subtasks 
+                                    SET title=?, description=?, status=?, start_date=?, deadline=?, 
+                                    priority=?, assigned_to=?, budget=?
+                                    WHERE id=?
+                                """, (
+                                    subtask_title, subtask_description, subtask_status, 
+                                    subtask_start_date, subtask_deadline, subtask_priority, 
+                                    assigned_to_id, subtask_budget, subtask_id
+                                ))
+                                st.success("Subtask updated successfully!")
+                                time.sleep(0.3)  # Small delay to ensure UI updates
+                                st.rerun()  # Force immediate refresh
+                            except Exception as e:
+                                st.error(f"Error updating subtask: {str(e)}")
+                                            
+                    with col2:
+                        if st.form_submit_button("Delete Subtask"):
+                            st.session_state.subtask_actions['confirm_delete'] = subtask_id
+    
+    # Delete confirmation (outside any form)
+    if st.session_state.subtask_actions['confirm_delete']:
+        st.warning("⚠️ Are you sure you want to delete this subtask? This action cannot be undone.")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Confirm Delete", key="confirm_delete_subtask"):
+                query_db("DELETE FROM subtasks WHERE id=?", (st.session_state.subtask_actions['confirm_delete'],))
+                st.success("Subtask deleted successfully!")
+                st.session_state.subtask_actions['confirm_delete'] = None
+                st.rerun()
+        with col2:
+            if st.button("❌ Cancel", key="cancel_delete_subtask"):
+                st.session_state.subtask_actions['confirm_delete'] = None
+                st.rerun()
+    
+    # Create New Subtask Section
+    st.markdown("---")
+    st.subheader("Create New Subtask")
+    
+    if st.button("➕ Create New Subtask", key="toggle_subtask_form"):
+        st.session_state.subtask_actions['show_subtask_form'] = not st.session_state.subtask_actions['show_subtask_form']
+    
+    if st.session_state.subtask_actions['show_subtask_form']:
+        with st.form(key="new_subtask_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                new_subtask_title = st.text_input("Title*", placeholder="Enter subtask name", key="new_subtask_title")
+                new_subtask_description = st.text_area("Description", placeholder="Enter subtask description", key="new_subtask_desc")
+                
+                status_col, priority_col = st.columns(2)
+                with status_col:
+                    new_subtask_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"], key="new_subtask_status")
+                with priority_col:
+                    new_subtask_priority = st.selectbox("Priority", ["High", "Medium", "Low"], key="new_subtask_priority")
+            
+            with col2:
+                date_col1, date_col2 = st.columns(2)
+                with date_col1:
+                    new_subtask_start_date = st.date_input("Start Date", value=start_date, key="new_subtask_start")
+                with date_col2:
+                    new_subtask_deadline = st.date_input("Deadline", value=deadline, key="new_subtask_deadline")
+                
+                new_subtask_budget = st.number_input("Budget ($)", min_value=0.0, value=0.0, step=0.01, key="new_subtask_budget")
+                
+                team_members = query_db("SELECT id, username FROM users ORDER BY username")
+                new_subtask_assigned_to = st.selectbox(
+                    "Assign To", 
+                    ["Unassigned"] + [member[1] for member in team_members],
+                    key="new_subtask_assignee"
+                )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.form_submit_button("Create Subtask"):
+                    if not new_subtask_title.strip():
+                        st.error("Subtask title is required")
+                    elif new_subtask_deadline < new_subtask_start_date:
+                        st.error("Deadline must be on or after the start date")
+                    else:
+                        assigned_to_id = None
+                        if new_subtask_assigned_to != "Unassigned":
+                            assigned_to_id = query_db(
+                                "SELECT id FROM users WHERE username = ?", 
+                                (new_subtask_assigned_to,), 
+                                one=True
+                            )[0]
+                        
+                        query_db("""
+                            INSERT INTO subtasks 
+                            (task_id, title, description, status, start_date, deadline, 
+                             priority, assigned_to, budget)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            task_id, new_subtask_title.strip(), new_subtask_description, 
+                            new_subtask_status, new_subtask_start_date, new_subtask_deadline,
+                            new_subtask_priority, assigned_to_id, new_subtask_budget
+                        ))
+                        st.success("Subtask created successfully!")
+                        st.session_state.subtask_actions['show_subtask_form'] = False
+                        st.rerun()
+            
+            with col2:
+                if st.form_submit_button("Cancel"):
+                    st.session_state.subtask_actions['show_subtask_form'] = False
+                    st.rerun()
         
 #
 def render_task_form(edit_mode=False, project_id=None):
