@@ -45,6 +45,52 @@ def sort_tasks(tasks):
     
     return sorted(tasks, key=get_sort_key)
 
+
+def update_task_dates_based_on_subtasks(task_id):
+    """Update task dates based on subtask dates"""
+    # Get all subtasks for this task
+    subtasks = query_db("""
+        SELECT start_date, deadline 
+        FROM subtasks 
+        WHERE task_id = ?
+    """, (task_id,))
+    
+    if not subtasks:
+        return None
+    
+    # Get current task dates
+    task = query_db("""
+        SELECT start_date, deadline 
+        FROM tasks 
+        WHERE id = ?
+    """, (task_id,), one=True)
+    
+    if not task or not task[0] or not task[1]:
+        return None
+    
+    task_start = pd.to_datetime(task[0])
+    task_end = pd.to_datetime(task[1])
+    
+    # Find min start date and max end date from subtasks
+    subtask_starts = [pd.to_datetime(s[0]) for s in subtasks if s[0]]
+    subtask_ends = [pd.to_datetime(s[1]) for s in subtasks if s[1]]
+    
+    # Determine new dates
+    new_start = min(subtask_starts) if subtask_starts and min(subtask_starts) < task_start else task_start
+    new_end = max(subtask_ends) if subtask_ends and max(subtask_ends) > task_end else task_end
+    
+    # Update task in database if dates changed
+    if new_start != task_start or new_end != task_end:
+        query_db("""
+            UPDATE tasks 
+            SET start_date = ?, deadline = ?
+            WHERE id = ?
+        """, (new_start.strftime('%Y-%m-%d'), 
+              new_end.strftime('%Y-%m-%d'), 
+              task_id))
+        
+        return (new_start, new_end)
+    return None
  
 #
 def edit_task_in_workspace(task_id, project_id=None):
@@ -515,6 +561,13 @@ def edit_task_in_workspace(task_id, project_id=None):
                 if st.form_submit_button("Cancel"):
                     st.session_state.subtask_actions['show_subtask_form'] = False
                     st.rerun()
+
+            # In the subtask creation/update sections, add this after successful operations:
+            if submitted:
+                # Update task dates based on subtasks
+                update_task_dates_based_on_subtasks(task_id)
+                st.rerun()
+
         
 #
 def render_task_form(edit_mode=False, project_id=None):
@@ -909,153 +962,168 @@ def workspace_page():
                             else:
                                 st.caption(f"Status: {status}")
 
+           
+        
             # Gantt Chart
             elif view_option == "Gantt Chart":
                 st.write("### Project Timeline (Gantt Chart)")
                 
-                # Get tasks and subtasks
+                # Get project name for analytics
+                project_name = query_db("SELECT name FROM projects WHERE id = ?", (selected_project_id,), one=True)[0]
+                
+                # Get all tasks with their subtasks
                 tasks_data = query_db("""
                     SELECT 
-                        t.id, t.title, t.start_date, t.deadline,
-                        t.actual_start_date, t.actual_deadline,
-                        t.status, t.priority, u.username,
-                        s.id as subtask_id, s.title as subtask_title,
-                        s.start_date as subtask_start, s.deadline as subtask_end,
-                        s.actual_start_date as subtask_actual_start,
-                        s.actual_deadline as subtask_actual_end,
-                        s.status as subtask_status, s.priority as subtask_priority,
-                        u2.username as subtask_assignee
+                        t.id as task_id, 
+                        t.title as task_title,
+                        t.start_date as task_start,
+                        t.deadline as task_end,
+                        t.status as task_status,
+                        t.priority as task_priority,
+                        u1.username as task_assignee,
+                        t.actual_start_date,
+                        t.actual_deadline
                     FROM tasks t
-                    LEFT JOIN subtasks s ON t.id = s.task_id
-                    LEFT JOIN users u ON t.assigned_to = u.id
-                    LEFT JOIN users u2 ON s.assigned_to = u2.id
+                    LEFT JOIN users u1 ON t.assigned_to = u1.id
                     WHERE t.project_id = ?
-                    ORDER BY t.start_date, t.id, s.start_date, s.id
+                    ORDER BY 
+                        CASE WHEN t.start_date IS NULL THEN 1 ELSE 0 END,
+                        t.start_date ASC,
+                        t.id
                 """, (selected_project_id,))
                 
-                if tasks_data:
-                    gantt_data = []
-                    task_order = {}  # To maintain task-subtask hierarchy
-                    
-                    # First pass: Collect all tasks and their earliest dates
-                    tasks = {}
-                    for item in tasks_data:
-                        if item[0] not in tasks:
-                            tasks[item[0]] = {
-                                'title': item[1],
-                                'planned_start': pd.to_datetime(item[2]) if item[2] else None,
-                                'planned_end': pd.to_datetime(item[3]) if item[3] else None,
-                                'actual_start': pd.to_datetime(item[4]) if item[4] else None,
-                                'actual_end': pd.to_datetime(item[5]) if item[5] else None,
-                                'status': item[6],
-                                'priority': item[7],
-                                'assignee': item[8] or "Unassigned",
-                                'subtasks': []
-                            }
-                        
-                        if item[9]:  # If subtask exists
-                            subtask = {
-                                'id': item[9],
-                                'title': item[10],
-                                'planned_start': pd.to_datetime(item[11]) if item[11] else None,
-                                'planned_end': pd.to_datetime(item[12]) if item[12] else None,
-                                'actual_start': pd.to_datetime(item[13]) if item[13] else None,
-                                'actual_end': pd.to_datetime(item[14]) if item[14] else None,
-                                'status': item[15],
-                                'priority': item[16],
-                                'assignee': item[17] or "Unassigned"
-                            }
-                            tasks[item[0]]['subtasks'].append(subtask)
-                    
-                    # Sort tasks by planned start date (earliest first)
-                    sorted_tasks = sorted(
-                        tasks.values(),
-                        key=lambda x: x['planned_start'] if x['planned_start'] is not None else pd.Timestamp.max
+                # Get all subtasks for these tasks
+                subtasks_data = query_db("""
+                    SELECT 
+                        s.task_id,
+                        t.title as task_title,
+                        s.id as subtask_id,
+                        s.title as subtask_title,
+                        s.start_date as subtask_start,
+                        s.deadline as subtask_end,
+                        s.status as subtask_status,
+                        s.priority as subtask_priority,
+                        u2.username as subtask_assignee,
+                        s.budget as subtask_budget,
+                        s.time_spent as subtask_time_spent,
+                        s.actual_start_date,
+                        s.actual_deadline
+                    FROM subtasks s
+                    JOIN tasks t ON s.task_id = t.id
+                    LEFT JOIN users u2 ON s.assigned_to = u2.id
+                    WHERE s.task_id IN (
+                        SELECT id FROM tasks WHERE project_id = ?
                     )
+                    ORDER BY 
+                        s.task_id,
+                        CASE WHEN s.start_date IS NULL THEN 1 ELSE 0 END,
+                        s.start_date ASC,
+                        s.id
+                """, (selected_project_id,))
+                
+                if tasks_data or subtasks_data:
+                    gantt_data = []
+                    task_order = {}
+                    current_row = 0
                     
-                    # Second pass: Build gantt data in sorted order
-                    for task in sorted_tasks:
-                        # Add main task planned timeline
-                        if task['planned_start'] and task['planned_end']:
-                            gantt_data.append({
-                                "Task": f"📌 {task['title']}",
-                                "Start": task['planned_start'],
-                                "Finish": task['planned_end'],
-                                "Timeline": "Planned",
-                                "Type": "Task",
-                                "Status": task['status'],
-                                "Priority": task['priority'],
-                                "Assignee": task['assignee'],
-                                "SortKey": task['planned_start']
-                            })
+                    # Custom function to format dates or return N/A
+                    def format_date_or_na(date):
+                        return date.strftime('%Y-%m-%d') if pd.notna(date) else "N/A"
+                    
+                    # Process tasks and their subtasks
+                    for task in tasks_data:
+                        task_id = task[0]
+                        task_order[task_id] = current_row
+                        current_row += 1
                         
-                        # Add main task actual timeline
-                        if task['actual_start'] and task['actual_end']:
-                            gantt_data.append({
-                                "Task": f"📌 {task['title']}",
-                                "Start": task['actual_start'],
-                                "Finish": task['actual_end'],
-                                "Timeline": "Actual",
-                                "Type": "Task",
-                                "Status": task['status'],
-                                "Priority": task['priority'],
-                                "Assignee": task['assignee'],
-                                "SortKey": task['planned_start'] if task['planned_start'] else task['actual_start']
-                            })
+                        # Process dates
+                        planned_start = pd.to_datetime(task[2]) if task[2] else None
+                        planned_end = pd.to_datetime(task[3]) if task[3] else None
+                        actual_start = pd.to_datetime(task[7]) if task[7] else None
+                        actual_end = pd.to_datetime(task[8]) if task[8] else None
                         
-                        # Sort subtasks by planned start date (earliest first)
-                        sorted_subtasks = sorted(
-                            task['subtasks'],
-                            key=lambda x: x['planned_start'] if x['planned_start'] is not None else pd.Timestamp.max
-                        )
+                        # Format dates for tooltip
+                        planned_start_str = format_date_or_na(planned_start) if planned_start else "N/A"
+                        planned_end_str = format_date_or_na(planned_end) if planned_end else "N/A"
+                        actual_start_str = format_date_or_na(actual_start) if actual_start else "N/A"
+                        actual_end_str = format_date_or_na(actual_end) if actual_end else "N/A"
                         
-                        for subtask in sorted_subtasks:
-                            # Add subtask planned timeline
-                            if subtask['planned_start'] and subtask['planned_end']:
-                                gantt_data.append({
-                                    "Task": f"    ↳ {subtask['title']}",
-                                    "Start": subtask['planned_start'],
-                                    "Finish": subtask['planned_end'],
-                                    "Timeline": "Planned",
-                                    "Type": "Subtask",
-                                    "Status": subtask['status'],
-                                    "Priority": subtask['priority'],
-                                    "Assignee": subtask['assignee'],
-                                    "SortKey": subtask['planned_start']
-                                })
+                        gantt_data.append({
+                            "Task": f"📌 {task[1]}",
+                            "Start": planned_start if planned_start else pd.to_datetime('today'),
+                            "Finish": planned_end if planned_end else pd.to_datetime('today') + pd.Timedelta(days=1),
+                            "Planned Start": planned_start_str,
+                            "Planned End": planned_end_str,
+                            "Actual Start": actual_start_str,
+                            "Actual End": actual_end_str,
+                            "Type": "Task",
+                            "Status": task[4],
+                            "Priority": task[5],
+                            "Assignee": task[6] or "Unassigned",
+                            "Row": task_order[task_id],
+                            "Color": "#4E79A7"
+                        })
+                        
+                        # Find all subtasks for this task
+                        task_subtasks = [st for st in subtasks_data if st[0] == task_id]
+                        
+                        # Add subtasks under their parent task
+                        for subtask in task_subtasks:
+                            planned_start = pd.to_datetime(subtask[4]) if subtask[4] else None
+                            planned_end = pd.to_datetime(subtask[5]) if subtask[5] else None
+                            actual_start = pd.to_datetime(subtask[11]) if subtask[11] else None
+                            actual_end = pd.to_datetime(subtask[12]) if subtask[12] else None
                             
-                            # Add subtask actual timeline
-                            if subtask['actual_start'] and subtask['actual_end']:
-                                gantt_data.append({
-                                    "Task": f"    ↳ {subtask['title']}",
-                                    "Start": subtask['actual_start'],
-                                    "Finish": subtask['actual_end'],
-                                    "Timeline": "Actual",
-                                    "Type": "Subtask",
-                                    "Status": subtask['status'],
-                                    "Priority": subtask['priority'],
-                                    "Assignee": subtask['assignee'],
-                                    "SortKey": subtask['planned_start'] if subtask['planned_start'] else subtask['actual_start']
-                                })
+                            # Format dates for tooltip
+                            planned_start_str = format_date_or_na(planned_start) if planned_start else "N/A"
+                            planned_end_str = format_date_or_na(planned_end) if planned_end else "N/A"
+                            actual_start_str = format_date_or_na(actual_start) if actual_start else "N/A"
+                            actual_end_str = format_date_or_na(actual_end) if actual_end else "N/A"
+                            
+                            gantt_data.append({
+                                "Task": f"    ↳ {subtask[3]}",
+                                "Start": planned_start if planned_start else pd.to_datetime('today'),
+                                "Finish": planned_end if planned_end else pd.to_datetime('today') + pd.Timedelta(days=1),
+                                "Planned Start": planned_start_str,
+                                "Planned End": planned_end_str,
+                                "Actual Start": actual_start_str,
+                                "Actual End": actual_end_str,
+                                "Type": "Subtask",
+                                "Status": subtask[6],
+                                "Priority": subtask[7],
+                                "Assignee": subtask[8] or "Unassigned",
+                                "Row": current_row,
+                                "Color": "#6BA5D7"
+                            })
+                            current_row += 1
 
                     if gantt_data:
-                        # Create DataFrame and sort by planned start date
                         gantt_df = pd.DataFrame(gantt_data)
-                        gantt_df = gantt_df.sort_values(by='SortKey')
+                        gantt_df['ParentSortKey'] = gantt_df['Row'].apply(
+                            lambda x: gantt_df.loc[gantt_df['Row'] == (x if x % 2 == 0 else x-1), 'Start'].values[0]
+                        )
+                        gantt_df = gantt_df.sort_values(by=['ParentSortKey', 'Row'])
                         
-                        # Create figure
+                        row_order = {row: i for i, row in enumerate(sorted(gantt_df['Row'].unique()))}
+                        gantt_df['DisplayRow'] = gantt_df['Row'].map(row_order)
+                        
+                        # Create figure with complete date information
                         fig = px.timeline(
                             gantt_df,
                             x_start="Start",
                             x_end="Finish",
-                            y="Task",
-                            color="Timeline",
+                            y="DisplayRow",
+                            color="Type",
                             color_discrete_map={
-                                "Planned": "lightgray",
-                                "Actual": "#4E79A7"  # Muted blue
+                                "Task": "#4E79A7",
+                                "Subtask": "#6BA5D7"
                             },
-                            hover_data=["Type", "Status", "Priority", "Assignee"],
-                            title="Tasks and Subtasks Timeline (Sorted by Planned Start Date)"
+                            hover_data=[
+                                "Task", "Status", "Priority", "Assignee",
+                                "Planned Start", "Planned End",
+                                "Actual Start", "Actual End"
+                            ],
+                            title="Tasks and Subtasks Timeline"
                         )
                         
                         # Add today's line
@@ -1064,46 +1132,166 @@ def workspace_page():
                             type="line",
                             x0=today,
                             x1=today,
-                            y0=-1,
-                            y1=len(gantt_df['Task'].unique()),
+                            y0=-0.5,
+                            y1=len(row_order) - 0.5,
                             line=dict(color="red", width=2, dash="dot")
                         )
                         
-                        # Customize layout
-                        fig.update_yaxes(
-                            categoryorder="array",
-                            categoryarray=gantt_df['Task'].unique()[::-1],  # Reverse to show earliest at top
-                            autorange=False,
-                            tickfont=dict(size=12)
-                        )
+                        # Customize y-axis labels
+                        y_tick_text = [
+                            gantt_df[gantt_df['DisplayRow'] == i]['Task'].values[0] 
+                            for i in range(len(row_order))
+                        ]
                         
                         fig.update_layout(
-                            height=600 + len(gantt_df['Task'].unique()) * 20,  # Dynamic height
+                            yaxis=dict(
+                                tickmode='array',
+                                tickvals=list(range(len(row_order))),
+                                ticktext=y_tick_text,
+                                autorange="reversed"
+                            ),
+                            height=600 + len(row_order) * 30,
                             xaxis_title="Timeline",
-                            yaxis_title="Tasks & Subtasks",
                             hovermode="closest",
                             showlegend=True,
-                            legend_title="Timeline Type",
-                            margin=dict(l=150, r=50, t=80, b=50)  # Extra left margin for indented text
+                            legend_title="Task Type",
+                            margin=dict(l=200, r=50, t=80, b=50)
                         )
                         
-                        # Customize hover template
+                        # Tooltip with N/A for unavailable dates
                         fig.update_traces(
-                            hovertemplate="<b>%{y}</b><br>" +
-                                        "Type: %{customdata[0]}<br>" +
-                                        "Status: %{customdata[1]}<br>" +
-                                        "Priority: %{customdata[2]}<br>" +
-                                        "Assignee: %{customdata[3]}<br>" +
-                                        "Start: %{x|%b %d, %Y}<br>" +
-                                        "End: %{x_end|%b %d, %Y}<extra></extra>"
+                            hovertemplate=(
+                                "<b>%{customdata[0]}</b><br>"
+                                "Status: %{customdata[1]}<br>"
+                                "Priority: %{customdata[2]}<br>"
+                                "Assignee: %{customdata[3]}<br><br>"
+                                "<b>Planned Dates:</b><br>"
+                                "Start: %{customdata[4]}<br>"
+                                "End: %{customdata[5]}<br><br>"
+                                "<b>Actual Dates:</b><br>"
+                                "Start: %{customdata[6]}<br>"
+                                "End: %{customdata[7]}<br><br>"
+                               
+                            )
                         )
                         
                         st.plotly_chart(fig, use_container_width=True)
+                        
+                        # [Rest of your code for Subtasks Analytics Table remains here...]
+            
+           
+                        
+                        
+                        # Subtasks Analytics Table with Filters
+                        st.markdown("---")
+                        st.subheader("Subtasks Analytics")
+                        
+                        if subtasks_data:
+                            # Prepare data for analytics table
+                            analytics_data = []
+                            for subtask in subtasks_data:
+                                analytics_data.append({
+                                    "Project": project_name,
+                                    "Task": subtask[1],  # task_title
+                                    "Subtask": subtask[3],  # subtask_title
+                                    "Status": subtask[6],
+                                    "Priority": subtask[7],
+                                    "Assigned To": subtask[8] or "Unassigned",
+                                    "Start Date": pd.to_datetime(subtask[4]).date() if subtask[4] else None,
+                                    "Deadline": pd.to_datetime(subtask[5]).date() if subtask[5] else None,
+                                    "Budget": float(subtask[9]) if subtask[9] is not None else None,
+                                    "Time Spent (Hrs)": float(subtask[10]) if subtask[10] is not None else None
+                                })
+                            
+                            analytics_df = pd.DataFrame(analytics_data)
+                            
+                            # Add filters
+                            with st.expander("🔍 Filter Subtasks", expanded=True):
+                                col1, col2, col3, col4 = st.columns(4)
+                                
+                                with col1:
+                                    task_filter = st.multiselect(
+                                        "Filter by Task",
+                                        options=analytics_df['Task'].unique(),
+                                        default=None,
+                                        key="task_filter"
+                                    )
+                                
+                                with col2:
+                                    subtask_filter = st.multiselect(
+                                        "Filter by Subtask",
+                                        options=analytics_df['Subtask'].unique(),
+                                        default=None,
+                                        key="subtask_filter"
+                                    )
+                                
+                                with col3:
+                                    status_filter = st.multiselect(
+                                        "Filter by Status",
+                                        options=analytics_df['Status'].unique(),
+                                        default=None,
+                                        key="status_filter"
+                                    )
+                                
+                                with col4:
+                                    assignee_filter = st.multiselect(
+                                        "Filter by Assigned To",
+                                        options=analytics_df['Assigned To'].unique(),
+                                        default=None,
+                                        key="assignee_filter"
+                                    )
+                            
+                            # Apply filters
+                            if task_filter:
+                                analytics_df = analytics_df[analytics_df['Task'].isin(task_filter)]
+                            if subtask_filter:
+                                analytics_df = analytics_df[analytics_df['Subtask'].isin(subtask_filter)]
+                            if status_filter:
+                                analytics_df = analytics_df[analytics_df['Status'].isin(status_filter)]
+                            if assignee_filter:
+                                analytics_df = analytics_df[analytics_df['Assigned To'].isin(assignee_filter)]
+                            
+                            # Format numeric columns for display
+                            display_df = analytics_df.copy()
+                            display_df['Budget'] = display_df['Budget'].apply(
+                                lambda x: f"${x:,.2f}" if pd.notnull(x) else "-"
+                            )
+                            display_df['Time Spent (Hrs)'] = display_df['Time Spent (Hrs)'].apply(
+                                lambda x: f"{x:.1f}" if pd.notnull(x) else "-"
+                            )
+                            
+                            # Display the table with formatting
+                            st.dataframe(
+                                display_df,
+                                column_config={
+                                    "Project": st.column_config.TextColumn("Project"),
+                                    "Task": st.column_config.TextColumn("Task"),
+                                    "Subtask": st.column_config.TextColumn("Subtask"),
+                                    "Status": st.column_config.TextColumn("Status"),
+                                    "Priority": st.column_config.TextColumn("Priority"),
+                                    "Assigned To": st.column_config.TextColumn("Assigned To"),
+                                    "Start Date": st.column_config.DateColumn("Start Date"),
+                                    "Deadline": st.column_config.DateColumn("Deadline"),
+                                    "Budget": st.column_config.TextColumn("Budget"),
+                                    "Time Spent (Hrs)": st.column_config.TextColumn("Time Spent (Hrs)")
+                                },
+                                hide_index=True,
+                                use_container_width=True
+                            )
+                            
+                            # Download button for filtered data
+                            csv = analytics_df.to_csv(index=False).encode('utf-8')
+                            st.download_button(
+                                label="📥 Download Filtered Data as CSV",
+                                data=csv,
+                                file_name=f"{project_name}_subtasks_analytics.csv",
+                                mime="text/csv",
+                                key="download_filtered_subtasks"
+                            )
+                        else:
+                            st.info("No subtasks found for analytics")
                     else:
-                        st.warning("No tasks/subtasks with valid dates to display")
-                else:
-                    st.info("No tasks found for this project")
-
+                        st.info("No tasks found for this project")
 
 
 
