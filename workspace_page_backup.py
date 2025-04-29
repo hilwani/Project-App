@@ -911,95 +911,198 @@ def workspace_page():
 
             # Gantt Chart
             elif view_option == "Gantt Chart":
-                st.write("### Task Timeline")
+                st.write("### Project Timeline (Gantt Chart)")
                 
-                # Get and sort tasks
-                tasks = query_db("""
-                    SELECT t.id, t.title, t.start_date, t.deadline, t.status, 
-                        t.priority, t.assigned_to, t.actual_start_date, t.actual_deadline
+                # Get tasks and subtasks
+                tasks_data = query_db("""
+                    SELECT 
+                        t.id, t.title, t.start_date, t.deadline,
+                        t.actual_start_date, t.actual_deadline,
+                        t.status, t.priority, u.username,
+                        s.id as subtask_id, s.title as subtask_title,
+                        s.start_date as subtask_start, s.deadline as subtask_end,
+                        s.actual_start_date as subtask_actual_start,
+                        s.actual_deadline as subtask_actual_end,
+                        s.status as subtask_status, s.priority as subtask_priority,
+                        u2.username as subtask_assignee
                     FROM tasks t
+                    LEFT JOIN subtasks s ON t.id = s.task_id
+                    LEFT JOIN users u ON t.assigned_to = u.id
+                    LEFT JOIN users u2 ON s.assigned_to = u2.id
                     WHERE t.project_id = ?
-                """, (selected_project_id,)) or []
+                    ORDER BY t.start_date, t.id, s.start_date, s.id
+                """, (selected_project_id,))
                 
-                tasks = sort_tasks(tasks)  # Apply consistent sorting
-                
-                gantt_data = []
-                for task in tasks:
-                    # Planned timeline
-                    planned_start = pd.to_datetime(task[2]) if task[2] else None
-                    planned_end = pd.to_datetime(task[3]) if task[3] else None
+                if tasks_data:
+                    gantt_data = []
+                    task_order = {}  # To maintain task-subtask hierarchy
                     
-                    # Actual timeline
-                    actual_start = pd.to_datetime(task[7]) if task[7] else None
-                    actual_end = pd.to_datetime(task[8]) if task[8] else None
+                    # First pass: Collect all tasks and their earliest dates
+                    tasks = {}
+                    for item in tasks_data:
+                        if item[0] not in tasks:
+                            tasks[item[0]] = {
+                                'title': item[1],
+                                'planned_start': pd.to_datetime(item[2]) if item[2] else None,
+                                'planned_end': pd.to_datetime(item[3]) if item[3] else None,
+                                'actual_start': pd.to_datetime(item[4]) if item[4] else None,
+                                'actual_end': pd.to_datetime(item[5]) if item[5] else None,
+                                'status': item[6],
+                                'priority': item[7],
+                                'assignee': item[8] or "Unassigned",
+                                'subtasks': []
+                            }
+                        
+                        if item[9]:  # If subtask exists
+                            subtask = {
+                                'id': item[9],
+                                'title': item[10],
+                                'planned_start': pd.to_datetime(item[11]) if item[11] else None,
+                                'planned_end': pd.to_datetime(item[12]) if item[12] else None,
+                                'actual_start': pd.to_datetime(item[13]) if item[13] else None,
+                                'actual_end': pd.to_datetime(item[14]) if item[14] else None,
+                                'status': item[15],
+                                'priority': item[16],
+                                'assignee': item[17] or "Unassigned"
+                            }
+                            tasks[item[0]]['subtasks'].append(subtask)
                     
-                    # Get assignee name if available
-                    assigned_to = query_db("SELECT username FROM users WHERE id=?", (task[6],), one=True) if task[6] else None
+                    # Sort tasks by planned start date (earliest first)
+                    sorted_tasks = sorted(
+                        tasks.values(),
+                        key=lambda x: x['planned_start'] if x['planned_start'] is not None else pd.Timestamp.max
+                    )
                     
-                    if planned_start and planned_end:
-                        gantt_data.append({
-                            "Task": task[1],
-                            "Start": planned_start,
-                            "Finish": planned_end,
-                            "Timeline": "Planned",
-                            "Status": task[4],
-                            "Priority": task[5],
-                            "Assignee": assigned_to[0] if assigned_to else "Unassigned"
-                        })
-                    
-                    if actual_start and actual_end:
-                        gantt_data.append({
-                            "Task": task[1],
-                            "Start": actual_start,
-                            "Finish": actual_end,
-                            "Timeline": "Actual",
-                            "Status": task[4],
-                            "Priority": task[5],
-                            "Assignee": assigned_to[0] if assigned_to else "Unassigned"
-                        })
+                    # Second pass: Build gantt data in sorted order
+                    for task in sorted_tasks:
+                        # Add main task planned timeline
+                        if task['planned_start'] and task['planned_end']:
+                            gantt_data.append({
+                                "Task": f"📌 {task['title']}",
+                                "Start": task['planned_start'],
+                                "Finish": task['planned_end'],
+                                "Timeline": "Planned",
+                                "Type": "Task",
+                                "Status": task['status'],
+                                "Priority": task['priority'],
+                                "Assignee": task['assignee'],
+                                "SortKey": task['planned_start']
+                            })
+                        
+                        # Add main task actual timeline
+                        if task['actual_start'] and task['actual_end']:
+                            gantt_data.append({
+                                "Task": f"📌 {task['title']}",
+                                "Start": task['actual_start'],
+                                "Finish": task['actual_end'],
+                                "Timeline": "Actual",
+                                "Type": "Task",
+                                "Status": task['status'],
+                                "Priority": task['priority'],
+                                "Assignee": task['assignee'],
+                                "SortKey": task['planned_start'] if task['planned_start'] else task['actual_start']
+                            })
+                        
+                        # Sort subtasks by planned start date (earliest first)
+                        sorted_subtasks = sorted(
+                            task['subtasks'],
+                            key=lambda x: x['planned_start'] if x['planned_start'] is not None else pd.Timestamp.max
+                        )
+                        
+                        for subtask in sorted_subtasks:
+                            # Add subtask planned timeline
+                            if subtask['planned_start'] and subtask['planned_end']:
+                                gantt_data.append({
+                                    "Task": f"    ↳ {subtask['title']}",
+                                    "Start": subtask['planned_start'],
+                                    "Finish": subtask['planned_end'],
+                                    "Timeline": "Planned",
+                                    "Type": "Subtask",
+                                    "Status": subtask['status'],
+                                    "Priority": subtask['priority'],
+                                    "Assignee": subtask['assignee'],
+                                    "SortKey": subtask['planned_start']
+                                })
+                            
+                            # Add subtask actual timeline
+                            if subtask['actual_start'] and subtask['actual_end']:
+                                gantt_data.append({
+                                    "Task": f"    ↳ {subtask['title']}",
+                                    "Start": subtask['actual_start'],
+                                    "Finish": subtask['actual_end'],
+                                    "Timeline": "Actual",
+                                    "Type": "Subtask",
+                                    "Status": subtask['status'],
+                                    "Priority": subtask['priority'],
+                                    "Assignee": subtask['assignee'],
+                                    "SortKey": subtask['planned_start'] if subtask['planned_start'] else subtask['actual_start']
+                                })
 
-                if gantt_data:
-                    gantt_df = pd.DataFrame(gantt_data)
-                    
-                    # Ensure all hover_data columns exist
-                    hover_columns = ["Status", "Priority", "Assignee"]
-                    existing_hover_columns = [col for col in hover_columns if col in gantt_df.columns]
-                    
-                    fig = px.timeline(
-                        gantt_df,
-                        x_start="Start",
-                        x_end="Finish",
-                        y="Task",
-                        color="Timeline",
-                        color_discrete_map={
-                            "Planned": "lightgray",
-                            "Actual": "blue"
-                        },
-                        hover_data=existing_hover_columns,
-                        title="Task Timeline (Planned vs Actual)"
-                    )
-                    
-                    today = pd.to_datetime('today')
-                    fig.add_shape(
-                        type="line",
-                        x0=today,
-                        x1=today,
-                        y0=0,
-                        y1=1,
-                        yref="paper",
-                        line=dict(color="red", width=2, dash="dot")
-                    )
-                    
-                    fig.update_yaxes(autorange="reversed")
-                    fig.update_layout(
-                        height=600,
-                        xaxis_title="Timeline",
-                        yaxis_title="Tasks"
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
+                    if gantt_data:
+                        # Create DataFrame and sort by planned start date
+                        gantt_df = pd.DataFrame(gantt_data)
+                        gantt_df = gantt_df.sort_values(by='SortKey')
+                        
+                        # Create figure
+                        fig = px.timeline(
+                            gantt_df,
+                            x_start="Start",
+                            x_end="Finish",
+                            y="Task",
+                            color="Timeline",
+                            color_discrete_map={
+                                "Planned": "lightgray",
+                                "Actual": "#4E79A7"  # Muted blue
+                            },
+                            hover_data=["Type", "Status", "Priority", "Assignee"],
+                            title="Tasks and Subtasks Timeline (Sorted by Planned Start Date)"
+                        )
+                        
+                        # Add today's line
+                        today = pd.Timestamp.now().normalize()
+                        fig.add_shape(
+                            type="line",
+                            x0=today,
+                            x1=today,
+                            y0=-1,
+                            y1=len(gantt_df['Task'].unique()),
+                            line=dict(color="red", width=2, dash="dot")
+                        )
+                        
+                        # Customize layout
+                        fig.update_yaxes(
+                            categoryorder="array",
+                            categoryarray=gantt_df['Task'].unique()[::-1],  # Reverse to show earliest at top
+                            autorange=False,
+                            tickfont=dict(size=12)
+                        )
+                        
+                        fig.update_layout(
+                            height=600 + len(gantt_df['Task'].unique()) * 20,  # Dynamic height
+                            xaxis_title="Timeline",
+                            yaxis_title="Tasks & Subtasks",
+                            hovermode="closest",
+                            showlegend=True,
+                            legend_title="Timeline Type",
+                            margin=dict(l=150, r=50, t=80, b=50)  # Extra left margin for indented text
+                        )
+                        
+                        # Customize hover template
+                        fig.update_traces(
+                            hovertemplate="<b>%{y}</b><br>" +
+                                        "Type: %{customdata[0]}<br>" +
+                                        "Status: %{customdata[1]}<br>" +
+                                        "Priority: %{customdata[2]}<br>" +
+                                        "Assignee: %{customdata[3]}<br>" +
+                                        "Start: %{x|%b %d, %Y}<br>" +
+                                        "End: %{x_end|%b %d, %Y}<extra></extra>"
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("No tasks/subtasks with valid dates to display")
                 else:
-                    st.info("No tasks with dates to display")
+                    st.info("No tasks found for this project")
 
 
 
