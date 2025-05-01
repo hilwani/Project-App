@@ -24,7 +24,7 @@ from visualizations import (
     plot_duration_variance,
     plot_project_health,
     plot_plan_vs_actual_gantt, 
-    plot_duration_variance,
+    plot_duration_variance, 
     plot_duration_comparison 
 )
 
@@ -1401,6 +1401,15 @@ if st.session_state.authenticated:
             - Track time spent and completion status
             - Add dependencies between tasks
             - Attach files and add comments for collaboration
+            """)
+
+            st.markdown("**Subtasks**")
+            st.markdown("""
+            - Break tasks into smaller actionable items
+            - Set individual deadlines and assignees for each subtask
+            - Track subtask status independently from the main task
+            - View subtasks nested under their parent task for clarity
+            - Automatically roll up progress to the parent task           
             """)
 
             st.markdown("**Workspace**")
@@ -7564,6 +7573,31 @@ else:
             - Use priorities effectively
             - Regularly update task statuses
             """)
+
+
+            st.markdown("""
+            ### Subtask Management
+            
+            #### Creating Subtasks
+            1. Select a task from the task list
+            2. Click "Add Subtask"
+            3. Provide subtask details:
+            - Title (required)
+            - Detailed description (optional)
+            - Deadline (optional, inherited from parent task if not set)
+            - Assignee
+            
+            #### Subtask Features
+            - **Hierarchical View**: Subtasks appear nested under their parent task
+            - **Status Tracking**: Track subtask progress independently
+            - **Progress Roll-up**:  Parent task progress reflects subtask completion
+            
+            #### Productivity Tips
+            - Use subtasks to break complex tasks into smaller, manageable steps
+            - Assign subtasks to different team members for parallel progress
+            - Keep subtask deadlines aligned with the parent task timeline
+            """)
+
             
             st.image("https://via.placeholder.com/800x300?text=Task+Management+Screenshot", 
                     caption="Task Management Interface", use_container_width=True)

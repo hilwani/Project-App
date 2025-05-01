@@ -14,7 +14,7 @@ def get_db_connection():
 
 # Database query function
 def query_db(query, args=(), one=False):
-    conn = get_db_connection()
+    conn = get_db_connection() 
     cur = conn.cursor()
     cur.execute(query, args) 
     rv = cur.fetchall()
@@ -818,9 +818,26 @@ def workspace_page():
                 if not tasks:
                     st.info("No tasks found for this project")
                 else:
-                    # Create rows of 3 tasks each
-                    for i in range(0, len(tasks), 3):
-                        row_tasks = tasks[i:i+3]
+                    # Add Task Selection Dropdown
+                    # Create options with title and priority for all tasks
+                    task_options = {task[0]: f"{task[1]} ({task[4]})" for task in tasks}
+                    
+                    # Add default "View all tasks" option
+                    task_options = {None: "View all tasks"} | task_options
+                    
+                    selected_task_id = st.selectbox(
+                        "Filter Tasks",
+                        options=list(task_options.keys()),
+                        format_func=lambda x: task_options[x],
+                        key="task_selection_dropdown"
+                    )
+                    
+                    # Filter tasks based on selection
+                    display_tasks = tasks if selected_task_id is None else [t for t in tasks if t[0] == selected_task_id]
+
+                    # Create rows of 3 tasks each (will show either all tasks or just the selected one)
+                    for i in range(0, len(display_tasks), 3):
+                        row_tasks = display_tasks[i:i+3]
                         cols = st.columns(3, gap="large")  # Increased gap between cards
                         
                         for j, task in enumerate(row_tasks):
