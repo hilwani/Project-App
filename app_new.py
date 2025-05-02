@@ -19,12 +19,12 @@ import base64
 import plotly.graph_objects as go
 from visualizations import ( 
     plot_project_timeline, 
-    plot_budget_comparison,
+    plot_budget_comparison, 
     plot_completion_heatmap, 
     plot_duration_variance,
     plot_project_health,
     plot_plan_vs_actual_gantt, 
-    plot_duration_variance,
+    plot_duration_variance, 
     plot_duration_comparison 
 )
 
@@ -1403,6 +1403,15 @@ if st.session_state.authenticated:
             - Attach files and add comments for collaboration
             """)
 
+            st.markdown("**Subtasks**")
+            st.markdown("""
+            - Break tasks into smaller actionable items
+            - Set individual deadlines and assignees for each subtask
+            - Track subtask status independently from the main task
+            - View subtasks nested under their parent task for clarity
+            - Automatically roll up progress to the parent task           
+            """)
+
             st.markdown("**Workspace**")
             st.markdown("""
             - One stop centre to manage your tasks
@@ -1892,8 +1901,8 @@ def plot_subtask_analytics(tasks_df):
         if subtasks:
             # Create DataFrame with all subtask information
             subtasks_df = pd.DataFrame(subtasks, columns=[
-                "Project", "Task ID", "Task Title", "Subtask ID", 
-                "Subtask Title", "Description", "Status", "Start Date",
+                "Project", "Task ID", "Task", "Subtask ID", 
+                "Subtask", "Description", "Status", "Start Date",
                 "Deadline", "Priority", "Assigned To", "Budget", "Time Spent"
             ])
             
@@ -1913,13 +1922,13 @@ def plot_subtask_analytics(tasks_df):
                     
                     task_filter = st.selectbox(
                         "Filter by Task",
-                        ["All Tasks"] + sorted(subtasks_df['Task Title'].unique().tolist())
+                        ["All Tasks"] + sorted(subtasks_df['Task'].unique().tolist())
                     )
                 
                 with col2:
                     subtask_filter = st.selectbox(
                         "Filter by Subtask",
-                        ["All Subtasks"] + sorted(subtasks_df['Subtask Title'].unique().tolist())
+                        ["All Subtasks"] + sorted(subtasks_df['Subtask'].unique().tolist())
                     )
                     
                     assignee_filter = st.selectbox(
@@ -1940,10 +1949,10 @@ def plot_subtask_analytics(tasks_df):
                 filtered_df = filtered_df[filtered_df['Project'] == project_filter]
             
             if task_filter != 'All Tasks':
-                filtered_df = filtered_df[filtered_df['Task Title'] == task_filter]
+                filtered_df = filtered_df[filtered_df['Task'] == task_filter]
             
             if subtask_filter != 'All Subtasks':
-                filtered_df = filtered_df[filtered_df['Subtask Title'] == subtask_filter]
+                filtered_df = filtered_df[filtered_df['Subtask'] == subtask_filter]
             
             if assignee_filter != 'All Assignees':
                 filtered_df = filtered_df[filtered_df['Assigned To'] == assignee_filter]
@@ -1957,7 +1966,7 @@ def plot_subtask_analytics(tasks_df):
                 filtered_df,
                 use_container_width=True,
                 hide_index=True,
-                column_order=["Project", "Task Title", "Subtask Title", "Status", 
+                column_order=["Project", "Task", "Subtask", "Status", 
                              "Priority", "Assigned To", "Start Date", "Deadline",
                              "Budget", "Time Spent"],
                 column_config={
@@ -1998,11 +2007,11 @@ def plot_subtask_analytics(tasks_df):
                 if not budget_df.empty:
                     fig = px.bar(
                         budget_df,
-                        x='Subtask Title',
+                        x='Subtask',
                         y='Budget',
                         color='Project',
                         title="Subtask Budgets by Project",
-                        hover_data=['Task Title', 'Priority', 'Assigned To']
+                        hover_data=['Task', 'Priority', 'Assigned To']
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
@@ -2014,13 +2023,48 @@ def plot_subtask_analytics(tasks_df):
                 filtered_df['Duration'] = (filtered_df['Deadline'] - filtered_df['Start Date']).dt.days
                 fig = px.bar(
                     filtered_df,
-                    x='Subtask Title',
+                    x='Subtask',
                     y='Duration',
                     color='Project',
                     title="Subtask Durations by Project",
-                    hover_data=['Task Title', 'Priority', 'Assigned To', 'Budget']
+                    hover_data=['Task', 'Priority', 'Assigned To', 'Budget']
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+            # Gantt Chart Visualization
+            st.subheader("Subtasks Timeline (Gantt Chart)")
+            if not filtered_df.empty:
+                # Prepare data for Gantt chart
+                gantt_df = filtered_df.copy()
+                gantt_df['Task'] = gantt_df['Subtask'] + " (" + gantt_df['Status'] + ")"
+                
+                # Create Gantt chart
+                fig = px.timeline(
+                    gantt_df,
+                    x_start="Start Date",
+                    x_end="Deadline",
+                    y="Task",
+                    color="Project",
+                    title="Subtasks Timeline",
+                    hover_name="Subtask",
+                    hover_data=["Task", "Priority", "Assigned To", "Status", "Budget"],
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
+                
+                # Update layout for better readability
+                fig.update_yaxes(autorange="reversed")  # tasks listed top to bottom
+                fig.update_layout(
+                    height=600,
+                    xaxis_title="Timeline",
+                    yaxis_title="Subtasks",
+                    showlegend=True,
+                    hovermode='closest'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No data available for Gantt chart with current filters")
+
         else:
             st.warning("No subtasks found in the database")
     else:
@@ -7529,6 +7573,31 @@ else:
             - Use priorities effectively
             - Regularly update task statuses
             """)
+
+
+            st.markdown("""
+            ### Subtask Management
+            
+            #### Creating Subtasks
+            1. Select a task from the task list
+            2. Click "Add Subtask"
+            3. Provide subtask details:
+            - Title (required)
+            - Detailed description (optional)
+            - Deadline (optional, inherited from parent task if not set)
+            - Assignee
+            
+            #### Subtask Features
+            - **Hierarchical View**: Subtasks appear nested under their parent task
+            - **Status Tracking**: Track subtask progress independently
+            - **Progress Roll-up**:  Parent task progress reflects subtask completion
+            
+            #### Productivity Tips
+            - Use subtasks to break complex tasks into smaller, manageable steps
+            - Assign subtasks to different team members for parallel progress
+            - Keep subtask deadlines aligned with the parent task timeline
+            """)
+
             
             st.image("https://via.placeholder.com/800x300?text=Task+Management+Screenshot", 
                     caption="Task Management Interface", use_container_width=True)
@@ -7562,26 +7631,32 @@ else:
             - Manage tasks in List, Kanban, or Gantt views
             - Create, edit, and track progress with deadlines, priorities, and assignments
             - Owners and assignees can update task statuses
-            
-            b. 📂 Files
+
+            b. 📋 Subtasks
+            - Break tasks into smaller actionable items
+            - Set individual deadlines and assignees for each subtask
+            - Track subtask status independently from the main task
+            - View subtasks nested under their parent task for clarity                                                
+         
+            c. 📂 Files
             - Upload, share, and organize project files (PDF, DOCX, etc.)
             - Files can be linked to specific tasks or the overall project
             - Download or delete files with appropriate permissions
                         
-            c. 💬 Discussions
+            d. 💬 Discussions
             - Start topic-based conversations with threaded replies
             - Archive resolved discussions to keep the workspace clutter-free
             - Search by keywords to find past messages
 
-            d. 📅 Timeline
+            e. 📅 Timeline
             - Visualize task deadlines and dependencies in an interactive Gantt chart
             - The "Today" marker helps track progress against schedules
 
-            e. 📊 Progress
+            f. 📊 Progress
             - Monitor completion rates with metrics and pie charts
             - Automatically updates based on task status (e.g., "Completed" vs. "Pending")
                               
-            f. 👥 Team
+            g. 👥 Team
             - View and manage project members
             - Owners/admins can add or remove users                           
             - Roles and contact details are displayed for coordination

@@ -19,7 +19,7 @@ import base64
 import plotly.graph_objects as go
 from visualizations import ( 
     plot_project_timeline, 
-    plot_budget_comparison,
+    plot_budget_comparison, 
     plot_completion_heatmap, 
     plot_duration_variance,
     plot_project_health,
@@ -7631,26 +7631,32 @@ else:
             - Manage tasks in List, Kanban, or Gantt views
             - Create, edit, and track progress with deadlines, priorities, and assignments
             - Owners and assignees can update task statuses
-            
-            b. 📂 Files
+
+            b. 📋 Subtasks
+            - Break tasks into smaller actionable items
+            - Set individual deadlines and assignees for each subtask
+            - Track subtask status independently from the main task
+            - View subtasks nested under their parent task for clarity                                                
+         
+            c. 📂 Files
             - Upload, share, and organize project files (PDF, DOCX, etc.)
             - Files can be linked to specific tasks or the overall project
             - Download or delete files with appropriate permissions
                         
-            c. 💬 Discussions
+            d. 💬 Discussions
             - Start topic-based conversations with threaded replies
             - Archive resolved discussions to keep the workspace clutter-free
             - Search by keywords to find past messages
 
-            d. 📅 Timeline
+            e. 📅 Timeline
             - Visualize task deadlines and dependencies in an interactive Gantt chart
             - The "Today" marker helps track progress against schedules
 
-            e. 📊 Progress
+            f. 📊 Progress
             - Monitor completion rates with metrics and pie charts
             - Automatically updates based on task status (e.g., "Completed" vs. "Pending")
                               
-            f. 👥 Team
+            g. 👥 Team
             - View and manage project members
             - Owners/admins can add or remove users                           
             - Roles and contact details are displayed for coordination
