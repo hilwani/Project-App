@@ -34,12 +34,17 @@ from visualizations import (
 st.set_page_config(page_title="Project Management App", layout="wide")
 
 
-hide_github_icon = """
+hide_streamlit_style = """
 <style>
-.embeddedAppMetaInfoBar_container__DxxL1 {display: none;}
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+.stDeployButton {display:none;}
+div[data-testid="stToolbar"] {visibility: hidden;}
+[data-testid="manage-app-button"] {display: none;}
 </style>
 """
-st.markdown(hide_github_icon, unsafe_allow_html=True)
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 
 
