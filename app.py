@@ -36,13 +36,10 @@ st.set_page_config(page_title="Project Management App", layout="wide")
 
 hide_github_icon = """
 <style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-.embeddedAppMetaInfoBar_container__DxxL1 {visibility: hidden;}
+.embeddedAppMetaInfoBar_container__DxxL1 {display: none;}
 </style>
 """
 st.markdown(hide_github_icon, unsafe_allow_html=True)
-
 
 
 
