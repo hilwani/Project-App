@@ -1,0 +1,14 @@
+streamlit>=1.28.0
+pandas
+numpy
+sqlite3 
+datetime 
+time
+plotly.express 
+pandas 
+statsmodels.api 
+io
+logging
+json
+base64
+plotly.graph_objects
