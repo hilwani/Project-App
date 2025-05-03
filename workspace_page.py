@@ -45,12 +45,13 @@ def sort_tasks(tasks):
     
     return sorted(tasks, key=get_sort_key)
 
-
+#
 def update_task_dates_based_on_subtasks(task_id):
-    """Update task dates based on subtask dates"""
+    """Update task dates, time, and budget based on subtask data"""
     # Get all subtasks for this task
     subtasks = query_db("""
-        SELECT start_date, deadline 
+        SELECT start_date, deadline, actual_start_date, actual_deadline,
+               time_spent, actual_time_spent, budget, actual_cost 
         FROM subtasks 
         WHERE task_id = ?
     """, (task_id,))
@@ -58,40 +59,87 @@ def update_task_dates_based_on_subtasks(task_id):
     if not subtasks:
         return None
     
-    # Get current task dates
+    # Get current task data
     task = query_db("""
-        SELECT start_date, deadline 
+        SELECT start_date, deadline, actual_start_date, actual_deadline,
+               time_spent, actual_time_spent, budget, actual_cost 
         FROM tasks 
         WHERE id = ?
     """, (task_id,), one=True)
     
-    if not task or not task[0] or not task[1]:
+    if not task:
         return None
     
-    task_start = pd.to_datetime(task[0])
-    task_end = pd.to_datetime(task[1])
+    # Parse dates, times, and budgets
+    task_start = pd.to_datetime(task[0]) if task[0] else None
+    task_end = pd.to_datetime(task[1]) if task[1] else None
+    task_actual_start = pd.to_datetime(task[2]) if task[2] else None
+    task_actual_end = pd.to_datetime(task[3]) if task[3] else None
+    task_time_spent = float(task[4]) if task[4] is not None else 0.0
+    task_actual_time = float(task[5]) if task[5] is not None else 0.0
+    task_budget = float(task[6]) if task[6] is not None else 0.0
+    task_actual_cost = float(task[7]) if task[7] is not None else 0.0
     
-    # Find min start date and max end date from subtasks
+    # Find min/max dates and sum times/budgets from subtasks
     subtask_starts = [pd.to_datetime(s[0]) for s in subtasks if s[0]]
     subtask_ends = [pd.to_datetime(s[1]) for s in subtasks if s[1]]
+    subtask_actual_starts = [pd.to_datetime(s[2]) for s in subtasks if s[2]]
+    subtask_actual_ends = [pd.to_datetime(s[3]) for s in subtasks if s[3]]
+    subtask_times = [float(s[4]) for s in subtasks if s[4] is not None]
+    subtask_actual_times = [float(s[5]) for s in subtasks if s[5] is not None]
+    subtask_budgets = [float(s[6]) for s in subtasks if s[6] is not None]
+    subtask_actual_costs = [float(s[7]) for s in subtasks if s[7] is not None]
     
     # Determine new dates
-    new_start = min(subtask_starts) if subtask_starts and min(subtask_starts) < task_start else task_start
-    new_end = max(subtask_ends) if subtask_ends and max(subtask_ends) > task_end else task_end
+    new_start = min(subtask_starts) if subtask_starts and (task_start is None or min(subtask_starts) < task_start) else task_start
+    new_end = max(subtask_ends) if subtask_ends and (task_end is None or max(subtask_ends) > task_end) else task_end
+    new_actual_start = min(subtask_actual_starts) if subtask_actual_starts and (task_actual_start is None or min(subtask_actual_starts) < task_actual_start) else task_actual_start
+    new_actual_end = max(subtask_actual_ends) if subtask_actual_ends and (task_actual_end is None or max(subtask_actual_ends) > task_actual_end) else task_actual_end
     
-    # Update task in database if dates changed
-    if new_start != task_start or new_end != task_end:
+    # Calculate totals from subtasks
+    total_subtask_time = sum(subtask_times) if subtask_times else 0.0
+    total_subtask_actual_time = sum(subtask_actual_times) if subtask_actual_times else 0.0
+    total_subtask_budget = sum(subtask_budgets) if subtask_budgets else 0.0
+    total_subtask_actual_cost = sum(subtask_actual_costs) if subtask_actual_costs else 0.0
+    
+    # Calculate budget variance
+    budget_variance = total_subtask_budget - total_subtask_actual_cost
+    
+    # Update task in database if any values changed
+    if (new_start != task_start or new_end != task_end or 
+        new_actual_start != task_actual_start or new_actual_end != task_actual_end or
+        total_subtask_time != task_time_spent or total_subtask_actual_time != task_actual_time or
+        total_subtask_budget != task_budget or total_subtask_actual_cost != task_actual_cost):
+        
         query_db("""
             UPDATE tasks 
-            SET start_date = ?, deadline = ?
+            SET start_date = ?, deadline = ?,
+                actual_start_date = ?, actual_deadline = ?,
+                time_spent = ?, actual_time_spent = ?,
+                budget = ?, actual_cost = ?,
+                budget_variance = ?
             WHERE id = ?
-        """, (new_start.strftime('%Y-%m-%d'), 
-              new_end.strftime('%Y-%m-%d'), 
-              task_id))
+        """, (
+            new_start.strftime('%Y-%m-%d') if new_start else None,
+            new_end.strftime('%Y-%m-%d') if new_end else None,
+            new_actual_start.strftime('%Y-%m-%d') if new_actual_start else None,
+            new_actual_end.strftime('%Y-%m-%d') if new_actual_end else None,
+            total_subtask_time,
+            total_subtask_actual_time,
+            total_subtask_budget,
+            total_subtask_actual_cost,
+            budget_variance,
+            task_id
+        ))
         
-        return (new_start, new_end)
+        return (new_start, new_end, new_actual_start, new_actual_end, 
+                total_subtask_time, total_subtask_actual_time,
+                total_subtask_budget, total_subtask_actual_cost, budget_variance)
     return None
  
+
+
+
 #
 def edit_task_in_workspace(task_id, project_id=None):
     """Reusable edit task form for workspace page with fully functional subtask integration"""
@@ -477,6 +525,7 @@ def edit_task_in_workspace(task_id, project_id=None):
             with col2:
                 cancelled = st.form_submit_button("❌ Cancel")
             
+            # In the subtask form submission section (around line 700)
             if submitted:
                 if not subtask_title.strip():
                     st.error("Subtask title is required")
@@ -510,6 +559,10 @@ def edit_task_in_workspace(task_id, project_id=None):
                             st.session_state.subtask_form_mode
                         ))
                         st.success("Subtask updated successfully!")
+                        
+                        # Update parent task dates based on subtasks
+                        update_task_dates_based_on_subtasks(task_id)
+                        
                     else:
                         # Create new subtask
                         query_db("""
@@ -526,15 +579,14 @@ def edit_task_in_workspace(task_id, project_id=None):
                             subtask_actual_deadline, subtask_actual_cost, subtask_actual_time
                         ))
                         st.success("Subtask created successfully!")
+                        
+                        # Update parent task dates based on subtasks
+                        update_task_dates_based_on_subtasks(task_id)
                     
                     # Clear the form mode and force a rerun
                     st.session_state.subtask_form_mode = None
                     time.sleep(0.5)  # Small delay to show success message
                     st.rerun()
-            
-            if cancelled:
-                st.session_state.subtask_form_mode = None
-                st.rerun()
 
     # Subtask Actions (outside form)
     if subtasks:
@@ -560,13 +612,17 @@ def edit_task_in_workspace(task_id, project_id=None):
                     st.session_state.subtask_to_delete = subtask_id
             
             # Delete confirmation
-            if 'subtask_to_delete' in st.session_state and st.session_state.subtask_to_delete == subtask_id:
+            if st.session_state.get('subtask_to_delete') == subtask_id:
                 st.warning("⚠️ Are you sure you want to delete this subtask?")
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("✅ Confirm Delete", key="confirm_subtask_delete"):
                         query_db("DELETE FROM subtasks WHERE id=?", (subtask_id,))
                         st.success("Subtask deleted successfully!")
+                        
+                        # Update parent task dates based on remaining subtasks
+                        update_task_dates_based_on_subtasks(task_id)
+                        
                         del st.session_state.subtask_to_delete
                         st.rerun()
                 with col2:
