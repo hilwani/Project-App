@@ -28,8 +28,22 @@ from visualizations import (
     plot_duration_comparison 
 )
 
+
+
 # Page Config (MUST BE THE FIRST STREAMLIT COMMAND)
 st.set_page_config(page_title="Project Management App", layout="wide")
+
+
+hide_github_icon = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+.embeddedAppMetaInfoBar_container__DxxL1 {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_github_icon, unsafe_allow_html=True)
+
+
 
 
 # Add this after your page config
