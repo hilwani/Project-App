@@ -358,39 +358,94 @@ def edit_task_in_workspace(task_id, project_id=None):
     if 'subtask_form_mode' not in st.session_state:
         st.session_state.subtask_form_mode = None  # 'create' or subtask_id for edit
 
-    # Get all subtasks
+    # Get all subtasks with analytics data
     subtasks = query_db("""
-        SELECT s.id, s.title, s.description, s.status, s.start_date, s.deadline, 
-            s.priority, s.assigned_to, s.budget, s.time_spent, u.username,
-            s.actual_start_date, s.actual_deadline, s.actual_cost, s.actual_time_spent
+        SELECT 
+            s.id,
+            s.title,
+            s.description,
+            s.status,
+            s.start_date,
+            s.deadline,
+            s.priority,
+            s.assigned_to,
+            s.budget,
+            s.time_spent,
+            u.username as assignee_name,
+            s.actual_start_date,
+            s.actual_deadline,
+            s.actual_cost,
+            s.actual_time_spent
         FROM subtasks s
         LEFT JOIN users u ON s.assigned_to = u.id
         WHERE s.task_id=?
-        ORDER BY s.id
+        ORDER BY s.priority DESC, s.deadline ASC
     """, (task_id,))
 
     if subtasks:
         st.write("### Current Subtasks")
         
-        # Display subtasks table
+        # Create DataFrame with all subtask data
         subtasks_df = pd.DataFrame(subtasks, columns=[
             "ID", "Title", "Description", "Status", "Start Date", "Deadline",
-            "Priority", "Assigned To ID", "Budget", "Time Spent", "Assigned To",
+            "Priority", "Assigned To ID", "Budget", "Time Spent", "Assignee",
             "Actual Start", "Actual Deadline", "Actual Cost", "Actual Time Spent"
         ])
         
+        # Calculate additional metrics
+        subtasks_df["Budget Variance"] = subtasks_df["Budget"] - subtasks_df["Actual Cost"]
+        subtasks_df["Time Variance"] = subtasks_df["Time Spent"] - subtasks_df["Actual Time Spent"]
+        
+        # Format numeric columns
+        subtasks_df["Budget"] = subtasks_df["Budget"].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "-")
+        subtasks_df["Actual Cost"] = subtasks_df["Actual Cost"].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "-")
+        subtasks_df["Budget Variance"] = subtasks_df["Budget Variance"].apply(
+            lambda x: f"${x:,.2f}" if pd.notnull(x) else "-"
+        )
+        subtasks_df["Time Spent"] = subtasks_df["Time Spent"].apply(
+            lambda x: f"{x:.1f} hrs" if pd.notnull(x) else "-"
+        )
+        subtasks_df["Actual Time Spent"] = subtasks_df["Actual Time Spent"].apply(
+            lambda x: f"{x:.1f} hrs" if pd.notnull(x) else "-"
+        )
+        subtasks_df["Time Variance"] = subtasks_df["Time Variance"].apply(
+            lambda x: f"{x:.1f} hrs" if pd.notnull(x) else "-"
+        )
+        
+        # Display the analytics table
         st.dataframe(
-            subtasks_df[["ID", "Title", "Status", "Priority", "Assigned To", 
-                        "Start Date", "Deadline", "Budget", "Time Spent"]],
-            hide_index=True,
-            use_container_width=True,
+            subtasks_df,
             column_config={
+                "ID": st.column_config.NumberColumn("ID"),
+                "Title": st.column_config.TextColumn("Title"),
+                "Description": st.column_config.TextColumn("Description"),
+                "Status": st.column_config.TextColumn("Status"),
+                "Priority": st.column_config.TextColumn("Priority"),
                 "Start Date": st.column_config.DateColumn("Start Date"),
                 "Deadline": st.column_config.DateColumn("Deadline"),
-                "Budget": st.column_config.NumberColumn("Budget", format="$%.2f"),
-                "Time Spent": st.column_config.NumberColumn("Time Spent (hrs)")
-            }
+                "Actual Start": st.column_config.DateColumn("Actual Start"),
+                "Actual Deadline": st.column_config.DateColumn("Actual Deadline"),
+                "Budget": st.column_config.TextColumn("Budget"),
+                "Actual Cost": st.column_config.TextColumn("Actual Cost"),
+                "Budget Variance": st.column_config.TextColumn("Budget Variance"),
+                "Time Spent": st.column_config.TextColumn("Time Spent"),
+                "Actual Time Spent": st.column_config.TextColumn("Actual Time Spent"),
+                "Time Variance": st.column_config.TextColumn("Time Variance"),
+                "Assignee": st.column_config.TextColumn("Assignee")
+            },
+            hide_index=True,
+            use_container_width=True
         )
+
+
+
+        #     column_config={
+        #         "Start Date": st.column_config.DateColumn("Start Date"),
+        #         "Deadline": st.column_config.DateColumn("Deadline"),
+        #         "Budget": st.column_config.NumberColumn("Budget", format="$%.2f"),
+        #         "Time Spent": st.column_config.NumberColumn("Time Spent (hrs)")
+        #     }
+        # )
 
     # Create New Subtask button - triggers form mode
     if st.button("➕ Create New Subtask", key="new_subtask_btn"):
