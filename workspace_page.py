@@ -50,7 +50,7 @@ def sort_tasks(tasks):
 
 
 def update_parent_task_status(task_id):
-    """Update parent task status to Completed if all subtasks are completed"""
+    """Update parent task status based on subtasks' statuses"""
     subtasks = query_db("""
         SELECT status FROM subtasks 
         WHERE task_id = ?
@@ -59,15 +59,30 @@ def update_parent_task_status(task_id):
     if not subtasks:
         return False  # No subtasks to check
         
+    # Get current parent task status
+    parent_task = query_db("SELECT status FROM tasks WHERE id = ?", (task_id,), one=True)
+    current_status = parent_task[0] if parent_task else None
+    
+    # Check if all subtasks are completed
     all_completed = all(st[0] == "Completed" for st in subtasks)
     
     if all_completed:
+        new_status = "Completed"
+    else:
+        # Get the most relevant incomplete status
+        incomplete_statuses = [st[0] for st in subtasks if st[0] != "Completed"]
+        # Priority: In Progress > Pending
+        new_status = "In Progress" if "In Progress" in incomplete_statuses else "Pending"
+    
+    # Only update if status actually changed
+    if new_status != current_status:
         query_db("""
             UPDATE tasks 
-            SET status = 'Completed'
+            SET status = ?
             WHERE id = ?
-        """, (task_id,))
+        """, (new_status, task_id))
         return True
+        
     return False
 
 
@@ -1662,7 +1677,34 @@ def workspace_page():
                     
                   
                     # In the Gantt Chart data preparation
+                    # In the Gantt Chart data preparation
                     for task in tasks_data:
+                        # Update parent task status based on subtasks
+                        if update_parent_task_status(task[0]):
+                            # Re-fetch tasks data if status changed
+                            tasks_data = query_db("""
+                                SELECT 
+                                    t.id as task_id, 
+                                    t.title as task_title,
+                                    t.start_date as task_start,
+                                    t.deadline as task_end,
+                                    t.status as task_status,
+                                    t.priority as task_priority,
+                                    u1.username as task_assignee,
+                                    t.actual_start_date,
+                                    t.actual_deadline
+                                FROM tasks t
+                                LEFT JOIN users u1 ON t.assigned_to = u1.id
+                                WHERE t.project_id = ?
+                                ORDER BY 
+                                    CASE WHEN t.start_date IS NULL THEN 1 ELSE 0 END,
+                                    t.start_date ASC,
+                                    t.id
+                            """, (selected_project_id,))
+                            break  # Break and restart processing with fresh data
+
+
+
                         # Check and update parent task status first
                         if task[4] != "Completed":  # Only check if not already completed
                             update_parent_task_status(task[0])
@@ -2577,7 +2619,34 @@ def workspace_page():
             
            
             # In the Timeline tab data preparation
+            # In the Timeline tab data preparation
             for task in tasks_data:
+                # Update parent task status based on subtasks
+                if update_parent_task_status(task[0]):
+                    # Re-fetch tasks data if status changed
+                    tasks_data = query_db("""
+                        SELECT 
+                            t.id as task_id, 
+                            t.title as task_title,
+                            t.start_date as planned_start,
+                            t.deadline as planned_end,
+                            t.actual_start_date as actual_start,
+                            t.actual_deadline as actual_end,
+                            t.status as task_status,
+                            t.priority as task_priority,
+                            u.username as assignee
+                        FROM tasks t
+                        LEFT JOIN users u ON t.assigned_to = u.id
+                        WHERE t.project_id = ?
+                        ORDER BY
+                            CASE WHEN t.start_date IS NULL THEN 1 ELSE 0 END,
+                            t.start_date ASC,
+                            t.id
+                    """, (selected_project_id,))
+                    break  # Break and restart processing with fresh data
+
+
+
                 if task[6] != "Completed":  # task_status is at index 6
                     update_parent_task_status(task[0])
                 
