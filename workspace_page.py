@@ -47,6 +47,31 @@ def sort_tasks(tasks):
     
     return sorted(tasks, key=get_sort_key)
 
+
+
+def update_parent_task_status(task_id):
+    """Update parent task status to Completed if all subtasks are completed"""
+    subtasks = query_db("""
+        SELECT status FROM subtasks 
+        WHERE task_id = ?
+    """, (task_id,))
+    
+    if not subtasks:
+        return False  # No subtasks to check
+        
+    all_completed = all(st[0] == "Completed" for st in subtasks)
+    
+    if all_completed:
+        query_db("""
+            UPDATE tasks 
+            SET status = 'Completed'
+            WHERE id = ?
+        """, (task_id,))
+        return True
+    return False
+
+
+
 #
 def update_task_dates_based_on_subtasks(task_id):
     """Update task dates, time, and budget based on subtask data"""
@@ -793,6 +818,10 @@ def edit_task_in_workspace(task_id, project_id=None):
                             st.session_state.subtask_form_mode = None
                             time.sleep(0.5)
                             st.rerun()
+
+                            # Update parent task status if needed
+                            update_parent_task_status(task_id)
+                            st.rerun()
     
    
    
@@ -1102,6 +1131,7 @@ def workspace_page():
                                         <div style="font-size: 0.8rem; color: #666; margin-bottom: 8px;">
                                             <div style="margin-bottom: 4px;">📅 <strong>Start:</strong> {start_date if start_date else 'Not set'}</div>
                                             <div style="margin-bottom: 4px;">⏱️ <strong>Deadline:</strong> {deadline if deadline else 'Not set'}</div>
+                                            <div style="margin-bottom: 4px;">⏳ <strong>Status:</strong> {status}</div>
                                             <div>👤 <strong>Assigned:</strong> {query_db('SELECT username FROM users WHERE id=?', (assigned_to,), one=True)[0] if assigned_to else 'Unassigned'}</div>
                                         </div>
                                     </div>
@@ -1491,6 +1521,11 @@ def workspace_page():
                         status_tasks = [t for t in tasks if t[3] == status]
                         
                         for task in status_tasks:
+                            # Check if task should be marked completed based on subtasks
+                            if task[3] != "Completed":  # Only check if not already completed
+                                if update_parent_task_status(task[0]):
+                                    st.rerun()
+
                             deadline_info = ""
                             if task[6]:
                                 deadline_date = datetime.strptime(task[6], "%Y-%m-%d").date()
@@ -1625,8 +1660,13 @@ def workspace_page():
                         except:
                             return "N/A"
                     
-                    # Process tasks and their subtasks
+                  
+                    # In the Gantt Chart data preparation
                     for task in tasks_data:
+                        # Check and update parent task status first
+                        if task[4] != "Completed":  # Only check if not already completed
+                            update_parent_task_status(task[0])
+
                         task_id = task[0]
                         task_order[task_id] = current_row
                         current_row += 1
@@ -2535,7 +2575,13 @@ def workspace_page():
             row_mapping = {}
             current_row = 0
             
+           
+            # In the Timeline tab data preparation
             for task in tasks_data:
+                if task[6] != "Completed":  # task_status is at index 6
+                    update_parent_task_status(task[0])
+                
+
                 task_id, title, planned_start, planned_end, actual_start, actual_end, status, priority, assignee = task
                 
                 # Convert dates
