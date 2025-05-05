@@ -29,9 +29,9 @@ from visualizations import (
 )
 
 
-
 # Page Config (MUST BE THE FIRST STREAMLIT COMMAND)
 st.set_page_config(page_title="Project Management App", layout="wide")
+
 
 
 hide_streamlit_style = """
@@ -1891,198 +1891,160 @@ def edit_task_form(task_id, project_id):
 # Update the plot_subtask_analytics function with filters and budget column
 def plot_subtask_analytics(tasks_df):
     if not tasks_df.empty:
-        # Fetch all subtasks with extended information including budget
-        subtasks = query_db("""
-            SELECT 
-                p.name as project_name,
-                t.id as task_id, 
-                t.title as task_title,
-                s.id as subtask_id, 
-                s.title as subtask_title, 
-                s.description,
-                s.status,
-                s.start_date,
-                s.deadline,
-                s.priority,
-                u.username as assigned_to,
-                s.budget,
-                s.time_spent
-            FROM subtasks s
-            JOIN tasks t ON s.task_id = t.id
-            JOIN projects p ON t.project_id = p.id
-            LEFT JOIN users u ON s.assigned_to = u.id
-            ORDER BY p.name, t.id, s.id
-        """)
-        
-        if subtasks:
-            # Create DataFrame with all subtask information
-            subtasks_df = pd.DataFrame(subtasks, columns=[
-                "Project", "Task ID", "Task", "Subtask ID", 
-                "Subtask", "Description", "Status", "Start Date",
-                "Deadline", "Priority", "Assigned To", "Budget", "Time Spent"
-            ])
+        # Try to get extended subtask info first
+        try:
+            subtasks = query_db("""
+                SELECT 
+                    p.name as project_name,
+                    t.id as task_id, 
+                    t.title as task_title,
+                    s.id as subtask_id, 
+                    s.title as subtask_title, 
+                    s.description,
+                    s.status,
+                    s.start_date,
+                    s.deadline,
+                    s.priority,
+                    u.username as assigned_to
+                FROM subtasks s
+                JOIN tasks t ON s.task_id = t.id
+                JOIN projects p ON t.project_id = p.id
+                LEFT JOIN users u ON s.assigned_to = u.id
+                ORDER BY p.name, t.id, s.id
+            """)
             
-            # Convert date columns
-            subtasks_df['Start Date'] = pd.to_datetime(subtasks_df['Start Date'], errors='coerce')
-            subtasks_df['Deadline'] = pd.to_datetime(subtasks_df['Deadline'], errors='coerce')
-            
-            # Add filters section
-            with st.expander("🔍 Filter Subtasks", expanded=True):
-                col1, col2, col3 = st.columns(3)
+            if subtasks:
+                # Create DataFrame with project as first column
+                subtasks_df = pd.DataFrame(subtasks, columns=[
+                    "Project", "Task ID", "Task Title", "Subtask ID", 
+                    "Subtask Title", "Description", "Status", "Start Date",
+                    "Deadline", "Priority", "Assigned To"
+                ])
                 
+                # Add filter controls with unique keys
+                st.subheader("Filters")
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     project_filter = st.selectbox(
                         "Filter by Project",
-                        ["All Projects"] + sorted(subtasks_df['Project'].unique().tolist())
+                        ["All Projects"] + sorted(subtasks_df['Project'].unique().tolist()),
+                        key="subtask_project_filter"
                     )
-                    
-                    task_filter = st.selectbox(
-                        "Filter by Task",
-                        ["All Tasks"] + sorted(subtasks_df['Task'].unique().tolist())
-                    )
-                
                 with col2:
-                    subtask_filter = st.selectbox(
-                        "Filter by Subtask",
-                        ["All Subtasks"] + sorted(subtasks_df['Subtask'].unique().tolist())
-                    )
-                    
-                    assignee_filter = st.selectbox(
-                        "Filter by Assignee",
-                        ["All Assignees"] + sorted(subtasks_df['Assigned To'].dropna().unique().tolist())
-                    )
-                
-                with col3:
                     status_filter = st.selectbox(
                         "Filter by Status",
-                        ["All Statuses"] + sorted(subtasks_df['Status'].unique().tolist())
+                        ["All Statuses"] + sorted(subtasks_df['Status'].unique().tolist()),
+                        key="subtask_status_filter"
                     )
+                with col3:
+                    priority_filter = st.selectbox(
+                        "Filter by Priority",
+                        ["All Priorities"] + sorted(subtasks_df['Priority'].unique().tolist()),
+                        key="subtask_priority_filter"
+                    )
+                
+                # Apply filters
+                if project_filter != "All Projects":
+                    subtasks_df = subtasks_df[subtasks_df['Project'] == project_filter]
+                if status_filter != "All Statuses":
+                    subtasks_df = subtasks_df[subtasks_df['Status'] == status_filter]
+                if priority_filter != "All Priorities":
+                    subtasks_df = subtasks_df[subtasks_df['Priority'] == priority_filter]
+                
+                # Display the full subtasks table with Project first
+                st.subheader("Subtasks Overview")
+                st.dataframe(
+                    subtasks_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_order=["Project", "Task ID", "Task Title", "Subtask ID", 
+                                 "Subtask Title", "Status", "Priority", "Assigned To",
+                                 "Start Date", "Deadline", "Description"],
+                    key="subtasks_dataframe"  # Unique key for the dataframe
+                )
+                
+                # Completion analysis
+                st.subheader("Completion Analysis")
+                col1, col2 = st.columns(2)
+                with col1:
+                    status_counts = subtasks_df['Status'].value_counts()
+                    fig = px.pie(
+                        status_counts, 
+                        values=status_counts.values, 
+                        names=status_counts.index,
+                        title="Subtask Status Distribution"
+                    )
+                    st.plotly_chart(fig, use_container_width=True, key="status_pie_chart")
+                
+                with col2:
+                    completion_rate = (len(subtasks_df[subtasks_df['Status'] == 'Completed']) / len(subtasks_df)) * 100
+                    fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=completion_rate,
+                        title={'text': "Overall Completion Rate"},
+                        gauge={'axis': {'range': [0, 100]}}
+                    ))
+                    st.plotly_chart(fig, use_container_width=True, key="completion_gauge")
+                
+                # Timeline analysis by project
+                st.subheader("Timeline Analysis by Project")
+                if 'Start Date' in subtasks_df.columns and 'Deadline' in subtasks_df.columns:
+                    subtasks_df['Duration'] = (pd.to_datetime(subtasks_df['Deadline']) - 
+                                             pd.to_datetime(subtasks_df['Start Date'])).dt.days
+                    fig = px.bar(
+                        subtasks_df,
+                        x='Subtask Title',
+                        y='Duration',
+                        color='Project',
+                        title="Subtask Durations by Project",
+                        hover_data=['Task Title', 'Priority', 'Assigned To']
+                    )
+                    st.plotly_chart(fig, use_container_width=True, key="duration_bar_chart")
+            else:
+                st.warning("No subtasks found in the database")
+        except sqlite3.OperationalError as e:
+            st.error(f"Database error: {str(e)}")
+            # Fallback to basic subtask info with project
+            subtasks = query_db("""
+                SELECT 
+                    p.name as project_name,
+                    t.id as task_id, 
+                    t.title as task_title,
+                    s.id as subtask_id, 
+                    s.title as subtask_title, 
+                    s.status
+                FROM subtasks s
+                JOIN tasks t ON s.task_id = t.id
+                JOIN projects p ON t.project_id = p.id
+                ORDER BY p.name, t.id, s.id
+            """)
             
-            # Apply filters
-            filtered_df = subtasks_df.copy()
-            
-            if project_filter != 'All Projects':
-                filtered_df = filtered_df[filtered_df['Project'] == project_filter]
-            
-            if task_filter != 'All Tasks':
-                filtered_df = filtered_df[filtered_df['Task'] == task_filter]
-            
-            if subtask_filter != 'All Subtasks':
-                filtered_df = filtered_df[filtered_df['Subtask'] == subtask_filter]
-            
-            if assignee_filter != 'All Assignees':
-                filtered_df = filtered_df[filtered_df['Assigned To'] == assignee_filter]
-            
-            if status_filter != 'All Statuses':
-                filtered_df = filtered_df[filtered_df['Status'] == status_filter]
-            
-            # Display the filtered subtasks table
-            st.subheader("Subtasks Overview")
-            st.dataframe(
-                filtered_df,
-                use_container_width=True,
-                hide_index=True,
-                column_order=["Project", "Task", "Subtask", "Status", 
-                             "Priority", "Assigned To", "Start Date", "Deadline",
-                             "Budget", "Time Spent"],
-                column_config={
-                    "Start Date": st.column_config.DateColumn("Start Date"),
-                    "Deadline": st.column_config.DateColumn("Deadline"),
-                    "Budget": st.column_config.NumberColumn("Budget", format="$%.2f"),
-                    "Time Spent": st.column_config.NumberColumn("Time Spent (hrs)")
-                }
-            )
-            
-            # Completion analysis
-            st.subheader("Completion Analysis")
-            col1, col2 = st.columns(2)
-            with col1:
-                status_counts = filtered_df['Status'].value_counts()
+            if subtasks:
+                subtasks_df = pd.DataFrame(subtasks, columns=[
+                    "Project", "Task ID", "Task Title", "Subtask ID", "Subtask Title", "Status"
+                ])
+                
+                st.subheader("Subtasks Overview")
+                st.dataframe(
+                    subtasks_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_order=["Project", "Task ID", "Task Title", "Subtask ID", "Subtask Title", "Status"],
+                    key="basic_subtasks_dataframe"
+                )
+                
+                st.subheader("Completion Analysis")
+                status_counts = subtasks_df['Status'].value_counts()
                 fig = px.pie(
                     status_counts, 
                     values=status_counts.values, 
                     names=status_counts.index,
-                    title="Subtask Status Distribution"
+                    title="Subtask Status Distribution",
+                    key="basic_status_pie"
                 )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                completion_rate = (len(filtered_df[filtered_df['Status'] == 'Completed']) / len(filtered_df)) * 100
-                fig = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=completion_rate,
-                    title={'text': "Overall Completion Rate"},
-                    gauge={'axis': {'range': [0, 100]}}
-                ))
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Budget analysis
-            st.subheader("Budget Analysis")
-            if 'Budget' in filtered_df.columns:
-                budget_df = filtered_df.dropna(subset=['Budget'])
-                if not budget_df.empty:
-                    fig = px.bar(
-                        budget_df,
-                        x='Subtask',
-                        y='Budget',
-                        color='Project',
-                        title="Subtask Budgets by Project",
-                        hover_data=['Task', 'Priority', 'Assigned To']
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("No budget data available for filtered subtasks")
-            
-            # Timeline analysis by project
-            st.subheader("Timeline Analysis by Project")
-            if 'Start Date' in filtered_df.columns and 'Deadline' in filtered_df.columns:
-                filtered_df['Duration'] = (filtered_df['Deadline'] - filtered_df['Start Date']).dt.days
-                fig = px.bar(
-                    filtered_df,
-                    x='Subtask',
-                    y='Duration',
-                    color='Project',
-                    title="Subtask Durations by Project",
-                    hover_data=['Task', 'Priority', 'Assigned To', 'Budget']
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Gantt Chart Visualization
-            st.subheader("Subtasks Timeline (Gantt Chart)")
-            if not filtered_df.empty:
-                # Prepare data for Gantt chart
-                gantt_df = filtered_df.copy()
-                gantt_df['Task'] = gantt_df['Subtask'] + " (" + gantt_df['Status'] + ")"
-                
-                # Create Gantt chart
-                fig = px.timeline(
-                    gantt_df,
-                    x_start="Start Date",
-                    x_end="Deadline",
-                    y="Task",
-                    color="Project",
-                    title="Subtasks Timeline",
-                    hover_name="Subtask",
-                    hover_data=["Task", "Priority", "Assigned To", "Status", "Budget"],
-                    color_discrete_sequence=px.colors.qualitative.Pastel
-                )
-                
-                # Update layout for better readability
-                fig.update_yaxes(autorange="reversed")  # tasks listed top to bottom
-                fig.update_layout(
-                    height=600,
-                    xaxis_title="Timeline",
-                    yaxis_title="Subtasks",
-                    showlegend=True,
-                    hovermode='closest'
-                )
-                
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.warning("No data available for Gantt chart with current filters")
-
-        else:
-            st.warning("No subtasks found in the database")
+                st.warning("No subtasks found in the database")
     else:
         st.warning("No tasks available for subtask analysis")
 
