@@ -1539,6 +1539,19 @@ def workspace_page():
                 # Get project name for analytics
                 project_name = query_db("SELECT name FROM projects WHERE id = ?", (selected_project_id,), one=True)[0]
                 
+                # Color scheme definitions
+                task_colors = {
+                    "High": "#FF6B6B",    # Red for high priority
+                    "Medium": "#FFD166",  # Yellow for medium priority
+                    "Low": "#06D6A0"      # Green for low priority
+                }
+                
+                subtask_colors = {
+                    "High": "#FF9E9E",    # Lighter red
+                    "Medium": "#FFE08A",   # Lighter yellow
+                    "Low": "#7CE8C9"      # Lighter green
+                }
+
                 # Get all tasks with their subtasks
                 tasks_data = query_db("""
                     SELECT 
@@ -1594,9 +1607,23 @@ def workspace_page():
                     task_order = {}
                     current_row = 0
                     
-                    # Custom function to format dates or return N/A
+                    # Helper function to format dates or return N/A
                     def format_date_or_na(date):
-                        return date.strftime('%Y-%m-%d') if pd.notna(date) else "N/A"
+                        if pd.isna(date) or date is None:
+                            return "N/A"
+                        try:
+                            return date.strftime('%b %d, %Y')
+                        except:
+                            return "N/A"
+                    
+                    # Helper function to calculate duration or return N/A
+                    def calculate_duration(start, end):
+                        if pd.isna(start) or pd.isna(end) or start is None or end is None:
+                            return "N/A"
+                        try:
+                            return f"{(end - start).days} days"
+                        except:
+                            return "N/A"
                     
                     # Process tasks and their subtasks
                     for task in tasks_data:
@@ -1610,88 +1637,107 @@ def workspace_page():
                         actual_start = pd.to_datetime(task[7]) if task[7] else None
                         actual_end = pd.to_datetime(task[8]) if task[8] else None
                         
-                        # Format dates for tooltip
-                        planned_start_str = format_date_or_na(planned_start) if planned_start else "N/A"
-                        planned_end_str = format_date_or_na(planned_end) if planned_end else "N/A"
-                        actual_start_str = format_date_or_na(actual_start) if actual_start else "N/A"
-                        actual_end_str = format_date_or_na(actual_end) if actual_end else "N/A"
+                        # Format dates for display
+                        planned_start_str = format_date_or_na(planned_start)
+                        planned_end_str = format_date_or_na(planned_end)
+                        actual_start_str = format_date_or_na(actual_start)
+                        actual_end_str = format_date_or_na(actual_end)
                         
+                        # Calculate durations
+                        planned_duration = calculate_duration(planned_start, planned_end)
+                        actual_duration = calculate_duration(actual_start, actual_end)
+                        
+                        # Determine color based on priority
+                        priority = task[5] if task[5] in task_colors else "Medium"
+                        color = task_colors[priority]
+                        
+                        # Add task to Gantt data
                         gantt_data.append({
                             "Task": f"📌 {task[1]}",
                             "Start": planned_start if planned_start else pd.to_datetime('today'),
                             "Finish": planned_end if planned_end else pd.to_datetime('today') + pd.Timedelta(days=1),
+                            "Type": "Task",
+                            "Status": task[4],
+                            "Priority": priority,
+                            "Assignee": task[6] or "Unassigned",
+                            "Row": task_order[task_id],
+                            "Color": color,
                             "Planned Start": planned_start_str,
                             "Planned End": planned_end_str,
                             "Actual Start": actual_start_str,
                             "Actual End": actual_end_str,
-                            "Type": "Task",
-                            "Status": task[4],
-                            "Priority": task[5],
-                            "Assignee": task[6] or "Unassigned",
-                            "Row": task_order[task_id],
-                            "Color": "#4E79A7"
+                            "Planned Duration": planned_duration,
+                            "Actual Duration": actual_duration
                         })
                         
                         # Find all subtasks for this task
                         task_subtasks = [st for st in subtasks_data if st[0] == task_id]
                         
-                        # Add subtasks under their parent task
+                        # Add subtasks under their parent task with indentation
                         for subtask in task_subtasks:
                             planned_start = pd.to_datetime(subtask[4]) if subtask[4] else None
                             planned_end = pd.to_datetime(subtask[5]) if subtask[5] else None
                             actual_start = pd.to_datetime(subtask[11]) if subtask[11] else None
                             actual_end = pd.to_datetime(subtask[12]) if subtask[12] else None
                             
-                            # Format dates for tooltip
-                            planned_start_str = format_date_or_na(planned_start) if planned_start else "N/A"
-                            planned_end_str = format_date_or_na(planned_end) if planned_end else "N/A"
-                            actual_start_str = format_date_or_na(actual_start) if actual_start else "N/A"
-                            actual_end_str = format_date_or_na(actual_end) if actual_end else "N/A"
+                            # Format dates for display
+                            planned_start_str = format_date_or_na(planned_start)
+                            planned_end_str = format_date_or_na(planned_end)
+                            actual_start_str = format_date_or_na(actual_start)
+                            actual_end_str = format_date_or_na(actual_end)
+                            
+                            # Calculate durations
+                            planned_duration = calculate_duration(planned_start, planned_end)
+                            actual_duration = calculate_duration(actual_start, actual_end)
+                            
+                            # Determine subtask color based on priority
+                            subtask_priority = subtask[7] if subtask[7] in subtask_colors else "Medium"
+                            subtask_color = subtask_colors[subtask_priority]
                             
                             gantt_data.append({
                                 "Task": f"    ↳ {subtask[3]}",
                                 "Start": planned_start if planned_start else pd.to_datetime('today'),
                                 "Finish": planned_end if planned_end else pd.to_datetime('today') + pd.Timedelta(days=1),
+                                "Type": "Subtask",
+                                "Status": subtask[6],
+                                "Priority": subtask_priority,
+                                "Assignee": subtask[8] or "Unassigned",
+                                "Row": current_row,
+                                "Color": subtask_color,
                                 "Planned Start": planned_start_str,
                                 "Planned End": planned_end_str,
                                 "Actual Start": actual_start_str,
                                 "Actual End": actual_end_str,
-                                "Type": "Subtask",
-                                "Status": subtask[6],
-                                "Priority": subtask[7],
-                                "Assignee": subtask[8] or "Unassigned",
-                                "Row": current_row,
-                                "Color": "#6BA5D7"
+                                "Planned Duration": planned_duration,
+                                "Actual Duration": actual_duration
                             })
                             current_row += 1
 
                     if gantt_data:
                         gantt_df = pd.DataFrame(gantt_data)
-                        gantt_df['ParentSortKey'] = gantt_df['Row'].apply(
-                            lambda x: gantt_df.loc[gantt_df['Row'] == (x if x % 2 == 0 else x-1), 'Start'].values[0]
-                        )
-                        gantt_df = gantt_df.sort_values(by=['ParentSortKey', 'Row'])
                         
-                        row_order = {row: i for i, row in enumerate(sorted(gantt_df['Row'].unique()))}
-                        gantt_df['DisplayRow'] = gantt_df['Row'].map(row_order)
+                        # Calculate row spacing to prevent overlap
+                        gantt_df['SpacedRow'] = gantt_df.index * 2  # Double the row spacing
                         
-                        # Create figure with complete date information
+                        # Create figure with improved layout
                         fig = px.timeline(
                             gantt_df,
                             x_start="Start",
                             x_end="Finish",
-                            y="DisplayRow",
-                            color="Type",
+                            y="SpacedRow",
+                            color="Priority",
                             color_discrete_map={
-                                "Task": "#4E79A7",
-                                "Subtask": "#6BA5D7"
+                                "High": task_colors["High"],
+                                "Medium": task_colors["Medium"],
+                                "Low": task_colors["Low"]
                             },
                             hover_data=[
-                                "Task", "Status", "Priority", "Assignee",
-                                "Planned Start", "Planned End",
-                                "Actual Start", "Actual End"
+                                "Task", "Status", "Assignee", "Type",
+                                "Planned Start", "Planned End", "Planned Duration",
+                                "Actual Start", "Actual End", "Actual Duration"
                             ],
-                            title="Tasks and Subtasks Timeline"
+                            title=f"Gantt Chart - {project_name}",
+                            template="plotly_white"
                         )
                         
                         # Add today's line
@@ -1700,52 +1746,83 @@ def workspace_page():
                             type="line",
                             x0=today,
                             x1=today,
-                            y0=-0.5,
-                            y1=len(row_order) - 0.5,
-                            line=dict(color="red", width=2, dash="dot")
+                            y0=-1,
+                            y1=gantt_df['SpacedRow'].max() + 1,
+                            line=dict(color="red", width=2, dash="dot"),
+                            name="Today"
                         )
                         
-                        # Customize y-axis labels
-                        y_tick_text = [
-                            gantt_df[gantt_df['DisplayRow'] == i]['Task'].values[0] 
-                            for i in range(len(row_order))
-                        ]
-                        
+                        # Customize the layout
                         fig.update_layout(
                             yaxis=dict(
                                 tickmode='array',
-                                tickvals=list(range(len(row_order))),
-                                ticktext=y_tick_text,
-                                autorange="reversed"
+                                tickvals=gantt_df['SpacedRow'],
+                                ticktext=gantt_df['Task'],
+                                autorange="reversed",
+                                showgrid=True,
+                                gridcolor="lightgray"
                             ),
-                            height=600 + len(row_order) * 30,
-                            xaxis_title="Timeline",
+                            height=600 + len(gantt_df) * 25,  # Dynamic height based on number of items
+                            xaxis=dict(
+                                title="Timeline",
+                                showgrid=True,
+                                gridcolor="lightgray"
+                            ),
                             hovermode="closest",
                             showlegend=True,
-                            legend_title="Task Type",
-                            margin=dict(l=200, r=50, t=80, b=50)
+                            legend_title="Task Priority",
+                            margin=dict(l=250, r=50, t=80, b=50),
+                            plot_bgcolor="white",
+                            paper_bgcolor="white"
                         )
                         
-                        # Tooltip with N/A for unavailable dates
+                        # Customize hover template
                         fig.update_traces(
                             hovertemplate=(
                                 "<b>%{customdata[0]}</b><br>"
+                                "Type: %{customdata[3]}<br>"
                                 "Status: %{customdata[1]}<br>"
-                                "Priority: %{customdata[2]}<br>"
-                                "Assignee: %{customdata[3]}<br><br>"
-                                "<b>Planned Dates:</b><br>"
+                                "Assignee: %{customdata[2]}<br><br>"
+                                
+                                "<b>Planned Timeline</b><br>"
                                 "Start: %{customdata[4]}<br>"
-                                "End: %{customdata[5]}<br><br>"
-                                "<b>Actual Dates:</b><br>"
-                                "Start: %{customdata[6]}<br>"
-                                "End: %{customdata[7]}<br><br>"
-                               
+                                "End: %{customdata[5]}<br>"
+                                "Duration: %{customdata[6]}<br><br>"
+                                
+                                "<b>Actual Timeline</b><br>"
+                                "Start: %{customdata[7]}<br>"
+                                "End: %{customdata[8]}<br>"
+                                "Duration: %{customdata[9]}<br><br>"
+                                
+                                "<extra></extra>"
                             )
                         )
                         
-                        st.plotly_chart(fig, use_container_width=True)
+                        # Add annotations for better readability
+                        fig.add_annotation(
+                            x=today,
+                            y=gantt_df['SpacedRow'].max() + 1,
+                            text="Today",
+                            showarrow=False,
+                            yshift=10,
+                            font=dict(color="red")
+                        )
                         
-                        # [Rest of your code for Subtasks Analytics Table remains here...]
+                        st.plotly_chart(fig, use_container_width=True)
+
+
+                        
+                        # Add legend explanation
+                        with st.expander("Chart Legend", expanded=True):
+                            st.markdown("""
+                            - **📌** - Main task
+                            - **↳** - Subtask
+                            - **Colors** indicate priority:
+                                - <span style='color:#FF6B6B;'>Red</span> - High priority
+                                - <span style='color:#FFD166;'>Yellow</span> - Medium priority
+                                - <span style='color:#06D6A0;'>Green</span> - Low priority
+                            - **Dotted red line** - Today's date
+                            """, unsafe_allow_html=True)
             
            
                         
@@ -2414,7 +2491,7 @@ def workspace_page():
     with tab4:  # Timeline Tab
         st.subheader("Project Timeline")
         
-        # Get all tasks with their planned and actual dates - maintaining the same sorting as Tasks tab
+        # Get all tasks with their planned and actual dates
         tasks_data = query_db("""
             SELECT 
                 t.id as task_id, 
@@ -2436,7 +2513,24 @@ def workspace_page():
         """, (selected_project_id,)) or []
         
         if tasks_data:
-            # Prepare data for Gantt chart - maintaining task order but with both timelines
+            # Helper functions to handle dates
+            def format_date_or_na(date):
+                if pd.isna(date) or date is None:
+                    return "N/A"
+                try:
+                    return date.strftime('%b %d, %Y')
+                except:
+                    return "N/A"
+            
+            def calculate_duration_or_na(start, end):
+                if pd.isna(start) or pd.isna(end) or start is None or end is None:
+                    return "N/A"
+                try:
+                    return f"{(end - start).days} days"
+                except:
+                    return "N/A"
+            
+            # Prepare data for Gantt chart
             gantt_data = []
             row_mapping = {}
             current_row = 0
@@ -2444,27 +2538,43 @@ def workspace_page():
             for task in tasks_data:
                 task_id, title, planned_start, planned_end, actual_start, actual_end, status, priority, assignee = task
                 
-                # Convert dates - same handling as Tasks tab
-                planned_start = pd.to_datetime(planned_start) if planned_start else pd.to_datetime('today')
-                planned_end = pd.to_datetime(planned_end) if planned_end else planned_start + pd.Timedelta(days=1)
+                # Convert dates
+                planned_start = pd.to_datetime(planned_start) if planned_start else None
+                planned_end = pd.to_datetime(planned_end) if planned_end else None
                 actual_start = pd.to_datetime(actual_start) if actual_start else None
                 actual_end = pd.to_datetime(actual_end) if actual_end else None
                 
-                # Maintain same row numbering as Tasks tab
+                # Format dates for display
+                planned_start_str = format_date_or_na(planned_start)
+                planned_end_str = format_date_or_na(planned_end)
+                actual_start_str = format_date_or_na(actual_start)
+                actual_end_str = format_date_or_na(actual_end)
+                
+                # Calculate durations
+                planned_duration = calculate_duration_or_na(planned_start, planned_end)
+                actual_duration = calculate_duration_or_na(actual_start, actual_end)
+                
+                # Maintain same row numbering
                 row_mapping[task_id] = current_row
                 current_row += 1
                 
                 # Add planned timeline (always shown)
                 gantt_data.append({
                     "Task": title,
-                    "Start": planned_start,
-                    "Finish": planned_end,
+                    "Start": planned_start if planned_start else pd.to_datetime('today'),
+                    "Finish": planned_end if planned_end else pd.to_datetime('today') + pd.Timedelta(days=1),
                     "Timeline": "Planned",
                     "Status": status,
                     "Priority": priority,
                     "Assignee": assignee or "Unassigned",
                     "Row": row_mapping[task_id],
-                    "Color": "lightgray"
+                    "Color": "lightgray",
+                    "Planned Start": planned_start_str,
+                    "Planned End": planned_end_str,
+                    "Planned Duration": planned_duration,
+                    "Actual Start": actual_start_str,
+                    "Actual End": actual_end_str,
+                    "Actual Duration": actual_duration
                 })
                 
                 # Add actual timeline if available
@@ -2478,13 +2588,19 @@ def workspace_page():
                         "Priority": priority,
                         "Assignee": assignee or "Unassigned",
                         "Row": row_mapping[task_id],
-                        "Color": "blue"
+                        "Color": "blue",
+                        "Planned Start": planned_start_str,
+                        "Planned End": planned_end_str,
+                        "Planned Duration": planned_duration,
+                        "Actual Start": actual_start_str,
+                        "Actual End": actual_end_str,
+                        "Actual Duration": actual_duration
                     })
             
             if gantt_data:
                 gantt_df = pd.DataFrame(gantt_data)
                 
-                # Sort maintaining Tasks tab order
+                # Sort maintaining order
                 gantt_df = gantt_df.sort_values(by=['Row', 'Start'])
                 
                 # Create the Gantt chart with both timelines
@@ -2492,13 +2608,17 @@ def workspace_page():
                     gantt_df,
                     x_start="Start",
                     x_end="Finish",
-                    y="Row",  # Maintain Tasks tab ordering
-                    color="Timeline",  # Color by timeline type
+                    y="Row",
+                    color="Timeline",
                     color_discrete_map={
                         "Planned": "lightgray",
                         "Actual": "blue"
                     },
-                    hover_data=["Task", "Status", "Priority", "Assignee"],
+                    hover_data=[
+                        "Task", "Status", "Priority", "Assignee",
+                        "Planned Start", "Planned End", "Planned Duration",
+                        "Actual Start", "Actual End", "Actual Duration"
+                    ],
                     title="Project Timeline (Planned vs Actual)"
                 )
                 
@@ -2509,23 +2629,13 @@ def workspace_page():
                     x0=today,
                     x1=today,
                     y0=-0.5,
-                    y1=current_row - 0.5,
+                    y1=len(row_mapping) - 0.5,
                     line=dict(color="red", width=2, dash="dot")
-                )
-                
-                # Add today's annotation
-                fig.add_annotation(
-                    x=today,
-                    y=current_row - 0.5,
-                    text="Today",
-                    showarrow=False,
-                    yshift=10,
-                    font=dict(color="red")
                 )
                 
                 # Custom y-axis labels to match task names
                 y_tick_text = [
-                    tasks_data[i][1] for i in range(len(row_mapping))  # Get task titles in order
+                    tasks_data[i][1] for i in range(len(row_mapping))
                 ]
                 
                 fig.update_layout(
@@ -2538,20 +2648,30 @@ def workspace_page():
                     height=600 + len(row_mapping) * 30,
                     xaxis_title="Timeline",
                     hovermode="closest",
-                    showlegend=True,  # Restored legend
+                    showlegend=True,
                     legend_title="Timeline Type",
                     margin=dict(l=200, r=50, t=80, b=50)
                 )
                 
-                # Tooltip with clear date display
+                # Enhanced tooltip with N/A for unavailable dates
                 fig.update_traces(
                     hovertemplate=(
                         "<b>%{customdata[0]}</b><br>"
                         "Status: %{customdata[1]}<br>"
                         "Priority: %{customdata[2]}<br>"
-                        "Assignee: %{customdata[3]}<br>"
-                        "Start: %{x|%Y-%m-%d}<br>"
-                        "End: %{x_end|%Y-%m-%d}<extra></extra>"
+                        "Assignee: %{customdata[3]}<br><br>"
+                        
+                        "<b>Planned Timeline</b><br>"
+                        "Start: %{customdata[4]}<br>"
+                        "End: %{customdata[5]}<br>"
+                        "Duration: %{customdata[6]}<br><br>"
+                        
+                        "<b>Actual Timeline</b><br>"
+                        "Start: %{customdata[7]}<br>"
+                        "End: %{customdata[8]}<br>"
+                        "Duration: %{customdata[9]}<br><br>"
+                        
+                        "<extra></extra>"
                     )
                 )
                 
