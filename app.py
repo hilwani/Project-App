@@ -10,13 +10,13 @@ import numpy as np
 import statsmodels.api as sm
 from streamlit_calendar import calendar
 from calendar_page import show_calendar_page
-from workspace_page import workspace_page
+# from workspace_page import workspace_page
 import io  # For handling in-memory file buffers
 import logging
 import streamlit.components.v1 as components
 import json
 import base64
-import plotly.graph_objects as go
+import plotly.graph_objects as go 
 from visualizations import ( 
     plot_project_timeline, 
     plot_budget_comparison, 
@@ -28,9 +28,21 @@ from visualizations import (
     plot_duration_comparison 
 )
 
+import streamlit as st
+st.set_page_config(
+    page_title="Project Management App",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Page Config (MUST BE THE FIRST STREAMLIT COMMAND)
-st.set_page_config(page_title="Project Management App", layout="wide")
+# Only THEN import other modules
+from workspace_page import workspace_page
+
+
+
+# # Page Config (MUST BE THE FIRST STREAMLIT COMMAND)
+# st.set_page_config(page_title="Project Management App", layout="wide") 
 
 
 
@@ -315,6 +327,7 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
