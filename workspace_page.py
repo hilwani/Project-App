@@ -27,6 +27,281 @@ def query_db(query, args=(), one=False):
     return (rv[0] if rv else None) if one else rv
 
 
+
+
+def render_project_form():
+    """Form for creating/editing projects"""
+    is_edit_mode = st.session_state.get('editing_project_id') is not None
+    
+    with st.form(key="project_form", clear_on_submit=not is_edit_mode):
+        if is_edit_mode:
+            st.subheader("✏️ Edit Project")
+            project = query_db("""
+                SELECT id, name, description, status, start_date, end_date, user_id, budget
+                FROM projects WHERE id=?    
+            """, (st.session_state.editing_project_id,), one=True)
+            
+            if not project:
+                st.error("Project not found")
+                st.session_state.show_project_form = False
+                st.session_state.editing_project_id = None
+                st.rerun()
+            
+            default_values = {
+                'name': project[1],
+                'description': project[2] or "",
+                'status': project[3] if project[3] else "Planning",
+                'start_date': datetime.strptime(project[4], "%Y-%m-%d").date() if project[4] else None,
+                'end_date': datetime.strptime(project[5], "%Y-%m-%d").date() if project[5] else None,
+                'manager_id': project[6],
+                'budget': float(project[7]) if project[7] is not None else None
+            }
+        else:
+            st.subheader("🆕 Create New Project")
+            default_values = {
+                'name': "",
+                'description': "",
+                'status': "Planning",
+                'start_date': None,
+                'end_date': None,
+                'manager_id': None,
+                'budget': None
+            }
+        
+        # Form fields
+        name = st.text_input("Project Name*", value=default_values['name'],
+                            placeholder="Enter unique project name (required)")
+        
+        # Check for duplicate name as user types
+        if name and name != default_values.get('name', ""):
+            if not is_project_name_unique(name, st.session_state.editing_project_id if is_edit_mode else None):
+                st.error("Project name already exists. Please choose a different name.")
+        
+        description = st.text_area("Description", value=default_values['description'], height=100)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            status = st.selectbox(
+                "Status*",
+                options=["Planning", "Active", "On Hold", "Completed", "Cancelled"],
+                index=["Planning", "Active", "On Hold", "Completed", "Cancelled"].index(
+                    default_values['status'] if default_values['status'] in ["Planning", "Active", "On Hold", "Completed", "Cancelled"] 
+                    else "Planning"
+                )
+            )
+            
+            start_date = st.date_input(
+                "Start Date*",
+                value=default_values['start_date'] or datetime.now().date()
+            )
+        
+        with col2:
+            end_date = st.date_input(
+                "End Date*",
+                value=default_values['end_date'] or (datetime.now().date() + timedelta(days=30))
+            )
+            
+            budget = st.number_input(
+                "Budget ($)",
+                min_value=0.0,
+                value=default_values['budget'] if default_values['budget'] is not None else 0.0,
+                step=100.0,
+                format="%.2f"
+            )
+        
+        # Manager selection - FIXED ISSUE WITH FORM CLOSING
+        # Manager selection section - UPDATED TO USE DROPDOWN IN BOTH CREATE AND EDIT MODES
+        if st.session_state.user_role == "Admin":
+            # Admin can see all users
+            users = query_db("SELECT id, username FROM users ORDER BY username")
+            user_options = {u[0]: u[1] for u in users} if users else {}
+        else:
+            # Non-admins can only see managers/admins
+            users = query_db("SELECT id, username FROM users WHERE role='Manager' OR role='Admin' ORDER BY username")
+            user_options = {u[0]: u[1] for u in users} if users else {}
+        
+        if not is_edit_mode:
+            # Create project form - show dropdown for manager selection
+            manager_id = st.selectbox(
+                "Project Manager*",
+                options=list(user_options.keys()),
+                format_func=lambda x: user_options[x],
+                index=0,
+                help="Select the project manager" + (" (Admin can assign any user)" if st.session_state.user_role == "Admin" else "")
+            )
+        else:
+            # Edit project form - show dropdown for manager selection (consistent with create form)
+            if st.session_state.user_role == "Admin":
+                # Admin can change to any user
+                manager_id = st.selectbox(
+                    "Project Manager*",
+                    options=list(user_options.keys()),
+                    format_func=lambda x: user_options[x],
+                    index=list(user_options.keys()).index(default_values['manager_id']) 
+                    if default_values['manager_id'] in user_options 
+                    else 0,
+                    help="Admin can assign any user as manager"
+                )
+            else:
+                # Non-admin can see but not change the manager
+                current_manager = query_db(
+                    "SELECT username FROM users WHERE id=?",
+                    (default_values['manager_id'],),
+                    one=True
+                )
+                current_manager_name = current_manager[0] if current_manager else "Unknown"
+                
+                # Display disabled dropdown showing current manager
+                manager_id = st.selectbox(
+                    "Project Manager",
+                    options=[default_values['manager_id']],
+                    format_func=lambda x: current_manager_name,
+                    index=0,
+                    disabled=True,
+                    help="Only administrators can change the project manager"
+                )
+        
+        # Form actions
+        # Form actions
+        st.divider()
+        col1, col2, _ = st.columns([1,1,2])
+        with col1:
+            submitted = st.form_submit_button(
+                "💾 Save Project" if is_edit_mode else "➕ Create Project", 
+                type="primary",
+                use_container_width=True
+            )
+        with col2:
+            if st.form_submit_button("❌ Cancel", 
+                                  type="secondary",
+                                  use_container_width=True):
+                st.session_state.show_project_form = False
+                st.session_state.editing_project_id = None
+                st.rerun()
+        
+        if submitted:
+            errors = []
+            if not name.strip():
+                errors.append("Project name is required")
+            elif not is_project_name_unique(name.strip(), st.session_state.editing_project_id if is_edit_mode else None):
+                errors.append("Project name already exists")
+            if end_date < start_date:
+                errors.append("End date must be after start date")
+            if budget < 0:
+                errors.append("Budget cannot be negative")
+
+            #
+            if not errors:
+                try:
+                    if is_edit_mode:
+                        # Get previous owner before update
+                        previous_owner = query_db(
+                            "SELECT user_id FROM projects WHERE id=?",
+                            (st.session_state.editing_project_id,),
+                            one=True
+                        )
+                        previous_owner_id = previous_owner[0] if previous_owner else None
+                        
+                        query_db("""
+                            UPDATE projects SET
+                                name=?, description=?, status=?,
+                                start_date=?, end_date=?, user_id=?, budget=?
+                            WHERE id=?
+                        """, (
+                            name.strip(), description, status,
+                            start_date, end_date, manager_id, budget,
+                            st.session_state.editing_project_id
+                        ))
+                        
+                        # Check if owner changed
+                        owner_changed = (previous_owner_id != manager_id) if previous_owner_id else False
+                        
+                        # Get new owner details for toast
+                        new_owner = query_db(
+                            "SELECT username FROM users WHERE id=?",
+                            (manager_id,),
+                            one=True
+                        )
+                        new_owner_name = new_owner[0] if new_owner else "Unknown"
+                        
+                        # Show toast notifications
+                        if owner_changed:
+                            st.toast(f"✉️ Ownership transferred to {new_owner_name}", icon="👤")
+                            # Get previous owner name for toast
+                            prev_owner = query_db(
+                                "SELECT username FROM users WHERE id=?",
+                                (previous_owner_id,),
+                                one=True
+                            )
+                            prev_owner_name = prev_owner[0] if prev_owner else "Unknown"
+                            st.toast(f"📬 CC notification sent to previous owner: {prev_owner_name}", icon="ℹ️")
+                        else:
+                            st.toast(f"✉️ Project update notification sent to owner: {new_owner_name}", icon="ℹ️")
+                        
+                        # Send email notification
+                        if owner_changed or manager_id != st.session_state.user_id:
+                            send_project_notification(
+                                st.session_state.editing_project_id,
+                                "update",
+                                previous_owner_id if owner_changed else None
+                            )
+                        
+                        st.success("Project updated successfully!")
+                    else:
+                        query_db("""
+                            INSERT INTO projects (
+                                name, description, status,
+                                start_date, end_date, user_id, budget
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            name.strip(), description, status,
+                            start_date, end_date, manager_id, budget
+                        ))
+                        
+                        # Get the newly created project ID
+                        new_project = query_db(
+                            "SELECT id FROM projects WHERE name=? ORDER BY id DESC LIMIT 1",
+                            (name.strip(),),
+                            one=True
+                        )
+                        
+                        if new_project:
+                            # Send notification to owner if different from creator
+                            if manager_id != st.session_state.user_id:
+                                send_project_notification(new_project[0], "create")
+                            else:
+                                # Show toast even if creator is owner
+                                st.toast("✅ Project created successfully! You are the project owner.", icon="👑")
+                        
+                        st.success("Project created successfully!")
+                    
+                    st.session_state.show_project_form = False
+                    st.session_state.editing_project_id = None
+                    time.sleep(0.5)
+                    st.rerun()
+                
+                except Exception as e:  # Proper exception handling
+                    st.error(f"Database error: {str(e)}")
+                    print(f"Error in project form submission: {str(e)}")
+
+
+def is_project_name_unique(name, exclude_id=None):
+    """Check if project name is unique (excluding current project if editing)"""
+    if exclude_id:
+        existing = query_db(
+            "SELECT id FROM projects WHERE name = ? AND id != ?",
+            (name.strip(), exclude_id),
+            one=True
+        )
+    else:
+        existing = query_db(
+            "SELECT id FROM projects WHERE name = ?",
+            (name.strip(),),
+            one=True
+        )
+    return existing is None
+
+
 # Email notification function
 def send_task_assignment_email(assignee_email, task_title, project_name, deadline, assigner_name, parent_task=None):
     """
@@ -95,9 +370,88 @@ def send_task_assignment_email(assignee_email, task_title, project_name, deadlin
         return False
 
 
+def send_subtask_assignment_email(assignee_email, subtask_title, project_name, 
+                                deadline, assigner_name, parent_task, subtask_url):
+    """Send email notification for new subtask assignment"""
+    try:
+        # # Email configuration - REPLACE WITH YOUR ACTUAL CREDENTIALS
+        # SMTP_SERVER = "smtp.gmail.com"
+        # SMTP_PORT = 587
+        # SMTP_USERNAME = "your_email@gmail.com"
+        # SMTP_PASSWORD = "your_app_password"
+        # SENDER_EMAIL = "your_email@gmail.com"
+
+        # Email Configuration (using Streamlit secrets)
+        SMTP_SERVER = st.secrets.get("email", {}).get("server", "smtp.gmail.com")
+        SMTP_PORT = st.secrets.get("email", {}).get("port", 587)
+        SENDER_EMAIL = st.secrets.get("email", {}).get("user", "your.email@gmail.com")
+        SENDER_PASSWORD = st.secrets.get("email", {}).get("password", "your-app-password")
+        
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = assignee_email
+        msg['Subject'] = f"New Subtask Assigned: {subtask_title}"
+        
+        # Email body with direct link
+        body = f"""
+        <html>
+            <body>
+                <h2>You have been assigned a new subtask</h2>
+                <p><strong>Subtask:</strong> {subtask_title}</p>
+                <p><strong>Parent Task:</strong> {parent_task}</p>
+                <p><strong>Project:</strong> {project_name}</p>
+                <p><strong>Deadline:</strong> {deadline}</p>
+                <p><strong>Assigned by:</strong> {assigner_name}</p>
+                <br>
+                <p><a href="{subtask_url}" style="
+                    background-color: #4CAF50;
+                    color: white;
+                    padding: 10px 20px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    border-radius: 5px;
+                    font-weight: bold;
+                ">View Subtask</a></p>
+                <br>
+                <p>Or copy this link: {subtask_url}</p>
+            </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(body, 'html'))
+        
+        # # Send email
+        # with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        #     server.starttls()
+        #     server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        #     server.send_message(msg)
+
+
+        # Send email
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            print("TLS started")
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            print("Logged in to SMTP server")
+            server.send_message(msg)
+            print("Email sent successfully")
+            st.toast(f"Notification sent to {assignee_email}")
+
+
+            
+        return True
+        
+    except Exception as e:
+        print(f"Email sending failed: {str(e)}")
+        st.error(f"Failed to send subtask assignment notification: {str(e)}")
+        return False
+
+
 # New email function for reassignments
 def send_subtask_reassignment_email(new_assignee_email, previous_assignee_email, subtask_title, 
-                                  project_name, deadline, assigner_name, parent_task=None):
+                                  project_name, deadline, assigner_name, parent_task, subtask_url):
     """
     Send email notification about subtask reassignment.
     """
@@ -135,7 +489,18 @@ def send_subtask_reassignment_email(new_assignee_email, previous_assignee_email,
                 <p><strong>Deadline:</strong> {deadline}</p>
                 <p><strong>Assigned by:</strong> {assigner_name}</p>
                 <br>
-                <p>Please review this subtask in the project management system.</p>
+                <p><a href="{subtask_url}" style="
+                    background-color: #4CAF50;
+                    color: white;
+                    padding: 10px 20px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    border-radius: 5px;
+                    font-weight: bold;
+                ">View Subtask</a></p>
+                <br>
+                <p>Or copy this link: {subtask_url}</p>
                 {'<p>Note: This subtask was previously assigned to someone else.</p>' if previous_assignee_email else ''}
             </body>
         </html>
@@ -170,7 +535,7 @@ def send_subtask_reassignment_email(new_assignee_email, previous_assignee_email,
 
 
 def send_task_reassignment_email(new_assignee_email, previous_assignee_email, task_title, 
-                               project_name, deadline, assigner_name):
+                               project_name, deadline, assigner_name, task_url):
     """
     Send email notification about task reassignment.
     """
@@ -199,6 +564,7 @@ def send_task_reassignment_email(new_assignee_email, previous_assignee_email, ta
         msg['Subject'] = f"Task Assigned to You: {task_title}"
         
         # Email body
+        # Email body with direct link
         body = f"""
         <html>
             <body>
@@ -208,7 +574,18 @@ def send_task_reassignment_email(new_assignee_email, previous_assignee_email, ta
                 <p><strong>Deadline:</strong> {deadline}</p>
                 <p><strong>Assigned by:</strong> {assigner_name}</p>
                 <br>
-                <p>Please review this task in the project management system.</p>
+                <p><a href="{task_url}" style="
+                    background-color: #4CAF50;
+                    color: white;
+                    padding: 10px 20px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    border-radius: 5px;
+                    font-weight: bold;
+                ">View Task</a></p>
+                <br>
+                <p>Or copy this link: {task_url}</p>
                 {'<p>Note: This task was previously assigned to someone else.</p>' if previous_assignee_email else ''}
             </body>
         </html>
@@ -240,6 +617,118 @@ def send_task_reassignment_email(new_assignee_email, previous_assignee_email, ta
         print(f"Email sending failed: {str(e)}")
         st.error(f"Failed to send reassignment notification: {str(e)}")
         return False
+
+
+#send project email notification
+def send_project_notification(project_id, action, previous_owner_id=None):
+    """Send email notification about project changes and show toast"""
+    try:
+        # Get project details
+        project = query_db("""
+            SELECT p.name, p.description, p.start_date, p.end_date, p.budget,
+                   u.email as owner_email, u.username as owner_name
+            FROM projects p
+            JOIN users u ON p.user_id = u.id
+            WHERE p.id = ?
+        """, (project_id,), one=True)
+        
+        if not project:
+            print("Project not found")
+            return False
+
+        # Get previous owner details if changed
+        previous_owner_email = None
+        previous_owner_name = None
+        if previous_owner_id:
+            previous_owner = query_db("""
+                SELECT email, username FROM users WHERE id = ?
+            """, (previous_owner_id,), one=True)
+            if previous_owner:
+                previous_owner_email = previous_owner[0]
+                previous_owner_name = previous_owner[1]
+
+        # Get current user (who made the change)
+        current_user = query_db("""
+            SELECT username FROM users WHERE id = ?
+        """, (st.session_state.user_id,), one=True)
+        modifier_name = current_user[0] if current_user else "System"
+
+        # Show toast notification for new projects
+        # Show toast notifications
+        if action == "create":
+            st.toast(f"📬 Notification sent to project owner: {project[6]}", icon="✉️")
+        elif action == "update":
+            if previous_owner_id:
+                # Get previous owner name for toast
+                prev_owner = query_db(
+                    "SELECT username FROM users WHERE id=?",
+                    (previous_owner_id,),
+                    one=True
+                )
+                prev_owner_name = prev_owner[0] if prev_owner else "Unknown"
+                st.toast(f"📬 CC notification sent to previous owner: {prev_owner_name}", icon="ℹ️")
+        
+        
+        # Email configuration
+        SMTP_SERVER = st.secrets.get("email", {}).get("server", "smtp.gmail.com")
+        SMTP_PORT = st.secrets.get("email", {}).get("port", 587)
+        SENDER_EMAIL = st.secrets.get("email", {}).get("user", "your.email@gmail.com")
+        SENDER_PASSWORD = st.secrets.get("email", {}).get("password", "your-app-password")
+
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = project[5]  # owner_email
+        
+        if previous_owner_email:
+            msg['Cc'] = previous_owner_email
+        
+        if action == "create":
+            msg['Subject'] = f"New Project Created: {project[0]}"
+        else:
+            msg['Subject'] = f"Project Updated: {project[0]}"
+
+        # Format dates
+        start_date = datetime.strptime(project[2], "%Y-%m-%d").strftime("%b %d, %Y") if project[2] else "Not specified"
+        end_date = datetime.strptime(project[3], "%Y-%m-%d").strftime("%b %d, %Y") if project[3] else "Not specified"
+        budget = f"${float(project[4]):,.2f}" if project[4] is not None else "Not specified"
+
+        # Email body
+        body = f"""
+        <html>
+            <body>
+                <h2>{'New Project Created' if action == 'create' else 'Project Updated'}</h2>
+                <p><strong>Project:</strong> {project[0]}</p>
+                <p><strong>Description:</strong> {project[1] or 'No description'}</p>
+                <p><strong>Start Date:</strong> {start_date}</p>
+                <p><strong>End Date:</strong> {end_date}</p>
+                <p><strong>Budget:</strong> {budget}</p>
+                <p><strong>Current Owner:</strong> {project[6]} ({project[5]})</p>
+                {'<p><strong>Previous Owner:</strong> ' + previous_owner_name + ' (' + previous_owner_email + ')</p>' if previous_owner_email else ''}
+                <p><strong>Created by:</strong> {modifier_name}</p>
+                <br>
+                <p>Please log in to the system to view this project.</p>
+            </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Send email
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.send_message(msg)
+            print("Project notification email sent successfully")
+            
+        return True
+        
+    except Exception as e:
+        print(f"Failed to send project notification: {str(e)}")
+        st.error(f"Failed to send notification email: {str(e)}")
+        return False
+
+
 
 
 
@@ -434,14 +923,6 @@ def edit_task_in_workspace(task_id, project_id=None):
             one=True
         )
 
-    # Initialize session state variables
-    if 'subtask_actions' not in st.session_state:
-        st.session_state.subtask_actions = {
-            'confirm_delete': None,
-            'show_subtask_form': False,
-            'editing_subtask': None
-        }
-
     with st.container(border=True):
         st.subheader(f"✏️ Editing: {task[2]}", divider="blue")
         
@@ -576,6 +1057,15 @@ def edit_task_in_workspace(task_id, project_id=None):
                     key=f"workspace_actual_cost_{task_id}"
                 )
 
+        # Notification Settings
+        with st.container(border=True):
+            st.markdown("**Notification Settings**")
+            send_notification = st.checkbox(
+                "Send email notifications for assignee changes",
+                value=True,
+                key=f"task_notify_{task_id}"
+            )
+
         # Form actions
         st.divider()
         col1, col2, _ = st.columns([1,1,2])
@@ -590,17 +1080,15 @@ def edit_task_in_workspace(task_id, project_id=None):
             st.session_state.editing_task_id = None
             st.rerun()
 
-
-        # Submit button
         if submitted:
-            # Get new assignee ID
-            assignee_id = None
+            # Get assignee ID from username
+            new_assigned_to_id = None
             if assignee != "Unassigned":
                 assignee_user = query_db("SELECT id FROM users WHERE username=?", (assignee,), one=True)
-                assignee_id = assignee_user[0] if assignee_user else None
+                new_assigned_to_id = assignee_user[0] if assignee_user else None
             
             # Check if assignee was changed
-            assignee_changed = (assignee_id != previous_assignee_id)
+            assignee_changed = (new_assigned_to_id != previous_assignee_id)
             
             # Convert dates to strings for database
             start_date_str = start_date.strftime("%Y-%m-%d") if start_date else None
@@ -622,18 +1110,21 @@ def edit_task_in_workspace(task_id, project_id=None):
                 WHERE id=?
             """, (
                 title, description, status,
-                priority, assignee_id, planned_time,
+                priority, new_assigned_to_id, planned_time,
                 start_date_str, deadline_str, actual_start_str,
                 actual_deadline_str, budget, actual_cost,
                 budget_variance, actual_time, task_id
             ))
             
-            # Send notifications if assignee changed
-            if assignee_changed and assignee_id:
+            # Send notifications if enabled and assignee changed
+            if send_notification and assignee_changed and new_assigned_to_id:
+                # Generate task URL
+                task_url = f"https://project-app-2025.streamlit.app/{task_id}"
+                
                 # Get new assignee info
                 new_assignee_info = query_db(
                     "SELECT email, username FROM users WHERE id = ?", 
-                    (assignee_id,), 
+                    (new_assigned_to_id,), 
                     one=True
                 )
                 
@@ -651,7 +1142,8 @@ def edit_task_in_workspace(task_id, project_id=None):
                         task_title=title,
                         project_name=task[17] if task[17] else "Unknown Project",
                         deadline=deadline_str or "Not specified",
-                        assigner_name=assigner_info[0] if assigner_info else "System"
+                        assigner_name=assigner_info[0] if assigner_info else "System",
+                        task_url=task_url
                     )
             
             st.success("Task updated successfully!")
@@ -659,6 +1151,8 @@ def edit_task_in_workspace(task_id, project_id=None):
             st.session_state.editing_task_id = None
             time.sleep(0.5)
             st.rerun()
+    
+    # ... [rest of your existing subtask management code] ...
 
     
     # Subtask Management Section
@@ -895,7 +1389,7 @@ def edit_task_in_workspace(task_id, project_id=None):
                     st.session_state.subtask_form_mode = None
                     st.rerun()
                 
-                # Get previous assignee info before changes
+                # Get previous assignee info
                 previous_assignee_id = subtask[7]  # assigned_to is at index 7
                 previous_assignee_info = None
                 if previous_assignee_id:
@@ -905,41 +1399,42 @@ def edit_task_in_workspace(task_id, project_id=None):
                         one=True
                     )
 
-                form_title = f"✏️ Edit Subtask: {subtask[1]}"
-                default_values = {
-                    'title': subtask[1],
-                    'description': subtask[2] or "",
-                    'status': subtask[3],
-                    'priority': subtask[6],
-                    'start_date': datetime.strptime(subtask[4], "%Y-%m-%d").date() if subtask[4] else None,
-                    'deadline': datetime.strptime(subtask[5], "%Y-%m-%d").date() if subtask[5] else None,
-                    'budget': float(subtask[8]) if subtask[8] else 0.0,
-                    'time_spent': float(subtask[9]) if subtask[9] else 0.0,
-                    'assignee': subtask[10] or "Unassigned",
-                    'actual_start': datetime.strptime(subtask[11], "%Y-%m-%d").date() if subtask[11] else None,
-                    'actual_deadline': datetime.strptime(subtask[12], "%Y-%m-%d").date() if subtask[12] else None,
-                    'actual_cost': float(subtask[13]) if subtask[13] else 0.0,
-                    'actual_time': float(subtask[14]) if subtask[14] else 0.0
-                }
-            else:
-                form_title = "🆕 Create New Subtask"
-                default_values = {
-                    'title': "",
-                    'description': "",
-                    'status': "Pending",
-                    'priority': "Medium",
-                    'start_date': None,
-                    'deadline': None,
-                    'budget': 0.0,
-                    'time_spent': 0.0,
-                    'assignee': "Unassigned",
-                    'actual_start': None,
-                    'actual_deadline': None,
-                    'actual_cost': 0.0,
-                    'actual_time': 0.0
-                }
-
             with st.container(border=True):
+                if is_edit_mode:
+                    form_title = f"✏️ Edit Subtask: {subtask[1]}"
+                    default_values = {
+                        'title': subtask[1],
+                        'description': subtask[2] or "",
+                        'status': subtask[3],
+                        'priority': subtask[6],
+                        'start_date': datetime.strptime(subtask[4], "%Y-%m-%d").date() if subtask[4] else None,
+                        'deadline': datetime.strptime(subtask[5], "%Y-%m-%d").date() if subtask[5] else None,
+                        'budget': float(subtask[8]) if subtask[8] else 0.0,
+                        'time_spent': float(subtask[9]) if subtask[9] else 0.0,
+                        'assignee': subtask[10] or "Unassigned",  # Fixed: Use assignee_name from query
+                        'actual_start': datetime.strptime(subtask[11], "%Y-%m-%d").date() if subtask[11] else None,
+                        'actual_deadline': datetime.strptime(subtask[12], "%Y-%m-%d").date() if subtask[12] else None,
+                        'actual_cost': float(subtask[13]) if subtask[13] else 0.0,
+                        'actual_time': float(subtask[14]) if subtask[14] else 0.0
+                    }
+                else:
+                    form_title = "🆕 Create New Subtask"
+                    default_values = {
+                        'title': "",
+                        'description': "",
+                        'status': "Pending",
+                        'priority': "Medium",
+                        'start_date': None,
+                        'deadline': None,
+                        'budget': 0.0,
+                        'time_spent': 0.0,
+                        'assignee': "Unassigned",
+                        'actual_start': None,
+                        'actual_deadline': None,
+                        'actual_cost': 0.0,
+                        'actual_time': 0.0
+                    }
+
                 st.subheader(form_title, divider="blue")
                 
                 with st.form(key="subtask_form", clear_on_submit=not is_edit_mode):
@@ -963,7 +1458,7 @@ def edit_task_in_workspace(task_id, project_id=None):
                                 index=["High", "Medium", "Low"].index(default_values['priority'])
                             )
                             
-                            # Assignment
+                            # Fixed: Proper user selection with correct default
                             team_members = query_db("SELECT id, username FROM users ORDER BY username")
                             assignee_options = ["Unassigned"] + [member[1] for member in team_members]
                             assignee = st.selectbox(
@@ -1031,6 +1526,15 @@ def edit_task_in_workspace(task_id, project_id=None):
                                 step=0.01
                             )
                     
+                    # Notification Settings
+                    with st.container(border=True):
+                        st.markdown("**Notification Settings**")
+                        send_notification = st.checkbox(
+                            "Send email notifications",
+                            value=True,
+                            key=f"subtask_notify_{st.session_state.subtask_form_mode}"
+                        )
+                    
                     # Form actions
                     st.divider()
                     col1, col2, _ = st.columns([1,1,2])
@@ -1050,17 +1554,21 @@ def edit_task_in_workspace(task_id, project_id=None):
                         else:
                             assigned_to_id = None
                             if assignee != "Unassigned":
-                                assigned_to_id = query_db(
+                                assigned_to = query_db(
                                     "SELECT id FROM users WHERE username = ?", 
                                     (assignee,), 
                                     one=True
-                                )[0]
+                                )
+                                if assigned_to:
+                                    assigned_to_id = assigned_to[0]
+                            
+                            # Generate subtask URL
+                            subtask_url = f"https://project-app-2025.streamlit.app/{task_id}/subtask/{st.session_state.subtask_form_mode if is_edit_mode else 'new'}"
                             
                             if is_edit_mode:
                                 # Check if assignee was changed
                                 assignee_changed = (assigned_to_id != previous_assignee_id)
                                 
-                                # Update subtask
                                 query_db("""
                                     UPDATE subtasks SET
                                         title=?, description=?, status=?, 
@@ -1078,21 +1586,16 @@ def edit_task_in_workspace(task_id, project_id=None):
                                     st.session_state.subtask_form_mode
                                 ))
                                 
-                                # Get parent task details
-                                parent_task_info = query_db("""
-                                    SELECT 
-                                        t.title as task_title,
-                                        p.name as project_name,
-                                        u.username as creator_username
-                                    FROM tasks t
-                                    JOIN projects p ON t.project_id = p.id
-                                    LEFT JOIN users u ON p.user_id = u.id
-                                    WHERE t.id = ?
-                                """, (task_id,), one=True)
-                                
-                                # Send notifications if assignee changed
-                                if assignee_changed and assigned_to_id:
-                                    # Get new assignee info
+                                # Send notification if assignee changed
+                                if send_notification and assignee_changed and assigned_to_id:
+                                    parent_task = query_db("""
+                                        SELECT t.title, p.name, u.username 
+                                        FROM tasks t
+                                        JOIN projects p ON t.project_id = p.id
+                                        LEFT JOIN users u ON p.user_id = u.id
+                                        WHERE t.id = ?
+                                    """, (task_id,), one=True)
+                                    
                                     new_assignee_info = query_db(
                                         "SELECT email, username FROM users WHERE id = ?", 
                                         (assigned_to_id,), 
@@ -1100,20 +1603,20 @@ def edit_task_in_workspace(task_id, project_id=None):
                                     )
                                     
                                     if new_assignee_info:
-                                        # Send to new assignee with CC to previous assignee
                                         send_subtask_reassignment_email(
                                             new_assignee_email=new_assignee_info[0],
                                             previous_assignee_email=previous_assignee_info[0] if previous_assignee_info else None,
                                             subtask_title=subtask_title.strip(),
-                                            project_name=parent_task_info[1] if parent_task_info else "Unknown Project",
+                                            project_name=parent_task[1] if parent_task else "Unknown Project",
                                             deadline=deadline.strftime('%Y-%m-%d') if deadline else "Not specified",
                                             assigner_name=st.session_state.get('username', 'System'),
-                                            parent_task=parent_task_info[0] if parent_task_info else "Unknown Task"
+                                            parent_task=parent_task[0] if parent_task else "Unknown Task",
+                                            subtask_url=subtask_url
                                         )
                                 
                                 st.success("Subtask updated successfully!")
                             else:
-                                # Create new subtask
+                                # For new subtasks, always send notification if assigned
                                 query_db("""
                                     INSERT INTO subtasks (
                                         task_id, title, description, status,
@@ -1128,34 +1631,31 @@ def edit_task_in_workspace(task_id, project_id=None):
                                     actual_deadline, actual_cost, actual_time
                                 ))
                                 
-                                # Get parent task details for email
-                                parent_task_info = query_db("""
-                                    SELECT 
-                                        t.title as task_title,
-                                        p.name as project_name,
-                                        u.username as creator_username
-                                    FROM tasks t
-                                    JOIN projects p ON t.project_id = p.id
-                                    LEFT JOIN users u ON p.user_id = u.id
-                                    WHERE t.id = ?
-                                """, (task_id,), one=True)
-                                
-                                # Get assignee details if assigned
-                                if assigned_to_id:
-                                    assignee_info = query_db(
+                                # Send notification for new subtask if assigned
+                                if send_notification and assigned_to_id:
+                                    parent_task = query_db("""
+                                        SELECT t.title, p.name, u.username 
+                                        FROM tasks t
+                                        JOIN projects p ON t.project_id = p.id
+                                        LEFT JOIN users u ON p.user_id = u.id
+                                        WHERE t.id = ?
+                                    """, (task_id,), one=True)
+                                    
+                                    new_assignee_info = query_db(
                                         "SELECT email, username FROM users WHERE id = ?", 
                                         (assigned_to_id,), 
                                         one=True
                                     )
                                     
-                                    if assignee_info:
-                                        send_task_assignment_email(
-                                            assignee_email=assignee_info[0],
-                                            task_title=f"Subtask: {subtask_title.strip()}",
-                                            project_name=parent_task_info[1] if parent_task_info else "Unknown Project",
+                                    if new_assignee_info:
+                                        send_subtask_assignment_email(
+                                            assignee_email=new_assignee_info[0],
+                                            subtask_title=subtask_title.strip(),
+                                            project_name=parent_task[1] if parent_task else "Unknown Project",
                                             deadline=deadline.strftime('%Y-%m-%d') if deadline else "Not specified",
-                                            assigner_name=parent_task_info[2] if parent_task_info else "System",
-                                            parent_task=parent_task_info[0] if parent_task_info else "Unknown Task"
+                                            assigner_name=st.session_state.get('username', 'System'),
+                                            parent_task=parent_task[0] if parent_task else "Unknown Task",
+                                            subtask_url=subtask_url
                                         )
                                 
                                 st.success("Subtask created successfully!")
@@ -1164,7 +1664,6 @@ def edit_task_in_workspace(task_id, project_id=None):
                             st.session_state.subtask_form_mode = None
                             time.sleep(0.5)
                             st.rerun()
-    
     
 
 
@@ -1381,6 +1880,215 @@ def render_task_form(edit_mode=False, project_id=None):
 
 
 def workspace_page():
+    
+    # Add Project Management section (only visible to admins/managers)
+    # ======= Project Management Section =======
+    st.markdown("---")
+    st.subheader("📋 Project Management")
+
+    # Different layouts for admin vs other users
+    if st.session_state.user_role == "Admin":
+        # Admin view - full controls
+        cols = st.columns([2, 1, 1, 1])
+        
+        with cols[0]:
+            # Project selection dropdown
+            projects = query_db("SELECT id, name FROM projects ORDER BY name")
+            project_options = {p[0]: p[1] for p in projects} if projects else {}
+            selected_project_id = st.selectbox(
+                "Select Project",
+                options=list(project_options.keys()),
+                format_func=lambda x: project_options[x],
+                key="project_edit_select"
+            )
+        
+        with cols[1]:
+            if st.button("➕ Create New", use_container_width=True):
+                st.session_state.show_project_form = True
+                st.session_state.editing_project_id = None
+                st.rerun()
+        
+        with cols[2]:
+            if st.button("✏️ Edit", use_container_width=True, 
+                    disabled=not selected_project_id):
+                if selected_project_id:
+                    st.session_state.show_project_form = True
+                    st.session_state.editing_project_id = selected_project_id
+                    st.rerun()
+        
+        with cols[3]:
+            if st.button("🗑️ Delete", type="secondary", use_container_width=True,
+                    disabled=not selected_project_id):
+                st.session_state.project_to_delete = selected_project_id
+        
+        # Delete confirmation
+        if 'project_to_delete' in st.session_state:
+            st.warning("Are you sure you want to delete this project and all its tasks?")
+            confirm_cols = st.columns([1,1,2])
+            with confirm_cols[0]:
+                if st.button("✅ Confirm", type="primary", use_container_width=True):
+                    query_db("DELETE FROM tasks WHERE project_id=?", (st.session_state.project_to_delete,))
+                    query_db("DELETE FROM project_team WHERE project_id=?", (st.session_state.project_to_delete,))
+                    query_db("DELETE FROM projects WHERE id=?", (st.session_state.project_to_delete,))
+                    st.success("Project deleted successfully!")
+                    del st.session_state.project_to_delete
+                    time.sleep(0.5)
+                    st.rerun()
+            with confirm_cols[1]:
+                if st.button("❌ Cancel", type="secondary", use_container_width=True):
+                    del st.session_state.project_to_delete
+                    st.rerun()
+
+    else:
+        # Non-admin view - simplified interface
+        cols = st.columns([1,1,2])
+        
+        with cols[0]:
+            st.button("➕ Create New", 
+                    use_container_width=True,
+                    disabled=True,
+                    help="Only administrators can create projects")
+        
+        with cols[1]:
+            st.button("✏️ Edit", 
+                    use_container_width=True,
+                    disabled=True,
+                    help="Only administrators can edit projects")
+
+    # Show project form if in create/edit mode
+    if st.session_state.get('show_project_form'):
+        # [Keep the existing render_project_form() implementation from previous code]
+        render_project_form()
+
+    # ======= Project Analytics Section =======
+    # [Previous project analytics code goes here...]
+
+
+
+    # Add Project Analytics section (visible to all users)
+    st.markdown("---")
+    st.subheader("📊 Project Analytics")
+
+    # First fetch all project data (same as before)
+    projects_data = query_db("""
+        SELECT 
+            p.id, 
+            p.user_id as owner_id, 
+            p.name, 
+            p.description, 
+            p.start_date as planned_start_date,
+            p.end_date as planned_deadline,
+            p.budget,
+            ROUND(COALESCE(SUM(t.actual_cost), 0)) as actual_cost,
+            ROUND(p.budget - COALESCE(SUM(t.actual_cost), 0)) as budget_variance,
+            COUNT(t.id) as task_count,
+            SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) as completed_tasks,
+            u.username as owner_name,
+            (ROUND(SUM(CASE WHEN t.status = 'Completed' THEN 1 ELSE 0 END) * 100.0 / 
+            NULLIF(COUNT(t.id), 0), 2)) as completion_pct,
+            julianday(p.end_date) - julianday(p.start_date) as planned_duration,
+            CASE
+                WHEN MIN(t.actual_start_date) IS NULL OR MAX(t.actual_deadline) IS NULL THEN NULL
+                ELSE julianday(MAX(t.actual_deadline)) - julianday(MIN(t.actual_start_date))
+            END as actual_duration
+        FROM projects p
+        LEFT JOIN tasks t ON t.project_id = p.id
+        LEFT JOIN users u ON p.user_id = u.id
+        GROUP BY p.id
+    """)
+
+    # Convert to DataFrame
+    project_df = pd.DataFrame(projects_data, columns=[
+        "ID", "Owner ID", "Project", "Description", "Planned Start Date", "Planned Deadline",
+        "Budget", "Actual Cost", "Budget Variance", "Total Tasks",
+        "Completed Tasks", "Owner", "Completion %",
+        "Planned Duration (days)", "Actual Duration (days)"
+    ])
+
+    # Ensure date columns are proper datetime objects
+    project_df["Planned Start Date"] = pd.to_datetime(project_df["Planned Start Date"])
+    project_df["Planned Deadline"] = pd.to_datetime(project_df["Planned Deadline"])
+
+    # Create filter widgets - matching your task page style but simplified
+    with st.expander("🔍 Filter Projects", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Project filter - matches your task page dropdown style
+            project_options = ['All Projects'] + sorted(project_df['Project'].unique().tolist())
+            selected_project = st.selectbox(
+                "Filter by Project", 
+                project_options,
+                key="project_filter"
+            )
+        
+        with col2:
+            # Owner filter - matches your task page dropdown style
+            owner_options = ['All Owners'] + sorted(project_df['Owner'].dropna().unique().tolist())
+            selected_owner = st.selectbox(
+                "Filter by Owner",
+                owner_options,
+                key="owner_filter"
+            )
+
+    # Apply filters - same logic as your task page but simplified
+    filtered_df = project_df.copy()
+
+    if selected_project != 'All Projects':
+        filtered_df = filtered_df[filtered_df['Project'] == selected_project]
+
+    if selected_owner != 'All Owners':
+        filtered_df = filtered_df[filtered_df['Owner'] == selected_owner]
+
+    # Display the filtered table with same styling as your task page
+    st.subheader("Project Analytics Summary")
+
+    # Create a copy for display with formatted currency values
+    display_df = filtered_df.copy()
+
+    # Format currency columns as whole numbers (matches your task page style)
+    display_df["Actual Cost"] = display_df["Actual Cost"].apply(
+        lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+    )
+    display_df["Budget Variance"] = display_df["Budget Variance"].apply(
+        lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+    )
+    display_df["Budget"] = display_df["Budget"].apply(
+        lambda x: f"${int(x):,}" if pd.notnull(x) else "$0"
+    )
+
+    # Format durations (matches your task page style)
+    display_df["Planned Duration"] = display_df["Planned Duration (days)"].apply(
+        lambda x: f"{float(x):.1f} days" if pd.notnull(x) else "N/A"
+    )
+    display_df["Actual Duration"] = display_df["Actual Duration (days)"].apply(
+        lambda x: f"{float(x):.1f} days" if pd.notnull(x) else "N/A"
+    )
+
+    # Display the formatted table (matches your task page style)
+    st.dataframe(
+        display_df[[
+            "Project", "Owner", "Planned Start Date", "Planned Deadline",
+            "Planned Duration", "Actual Duration", "Total Tasks",
+            "Completed Tasks", "Completion %", "Budget", "Actual Cost",
+            "Budget Variance"
+        ]],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Planned Start Date": st.column_config.DateColumn("Planned Start Date"),
+            "Planned Deadline": st.column_config.DateColumn("Planned Deadline"),
+            "Completion %": st.column_config.NumberColumn(
+                "Completion %",
+                format="%.1f%%",
+                min_value=0,
+                max_value=100
+            )
+        }
+    )
+
+
+   
     st.markdown("---")
     st.subheader("🔍 Select Workspace")
     

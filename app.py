@@ -358,6 +358,16 @@ def init_db():
     if 'budget' not in column_names:
         c.execute('ALTER TABLE projects ADD COLUMN budget REAL')  # Add budget column
 
+
+    # Check if projects table has status column
+    c.execute("PRAGMA table_info(projects)")
+    columns = c.fetchall()
+    column_names = [column[1] for column in columns]
+     
+    if 'status' not in column_names:
+       c.execute("ALTER TABLE projects ADD COLUMN status TEXT DEFAULT 'Planning'")
+            
+
     
     c.execute('''
         CREATE TABLE IF NOT EXISTS tasks (
@@ -599,14 +609,7 @@ def init_db():
     if 'uploaded_at' not in column_names:
         c.execute('ALTER TABLE attachments ADD COLUMN uploaded_at TEXT')
    
-   
-    # Check if the is_archived column exists, and if not, add it
-    # c.execute("PRAGMA table_info(discussion_topics)")
-    # columns = c.fetchall()
-    # column_names = [column[1] for column in columns]
-    
-    # if 'is_archieved' not in column_names:
-    #     c.execute('ALTER TABLE discussion_topics ADD COLUMN is_archived INTEGER DEFAULT 0') 
+
 
 
 
