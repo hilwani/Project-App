@@ -8,6 +8,16 @@ import time
 import smtplib 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart 
+from visualizations import ( 
+    plot_project_timeline, 
+    plot_budget_comparison, 
+    plot_completion_heatmap, 
+    plot_duration_variance,
+    plot_project_health,
+    plot_plan_vs_actual_gantt, 
+    plot_duration_variance, 
+    plot_duration_comparison 
+)
 
  
 # Database connection function 
@@ -2086,6 +2096,38 @@ def workspace_page():
             )
         }
     )
+
+
+    # Divider with spacing
+    st.markdown("---")
+    st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+
+
+    # Visualization Tabs (controlled by the same filters)
+    tab1, tab2, tab3, tab4 = st.tabs(["Timeline", "Budget", "Analytics", "Duration"])
+
+    # In your Projects page section where you have tabs:
+    with tab1:  # Timeline tab
+        # First ensure the dataframe has the correct columns
+        if all(col in project_df.columns for col in ['Planned Start Date', 'Planned Deadline']):
+            plot_project_timeline(project_df)
+        else:
+            st.error("Required columns for timeline visualization not found in data")
+
+    with tab2:  # Budget tab
+        plot_budget_comparison(project_df)
+        plot_project_health(project_df)
+
+    with tab3:  # Analytics tab
+        plot_completion_heatmap(project_df)
+        plot_duration_variance(project_df)
+
+    with tab4:  # Add this as a new tab in your existing tab structure
+        st.subheader("⏱️ Duration Analysis")
+        # plot_plan_vs_actual_gantt(project_df)
+        # plot_duration_variance(project_df)
+        plot_duration_comparison(project_df)
+
 
 
    
