@@ -2915,11 +2915,14 @@ def workspace_page():
                             })
                             current_row += 1
 
+                    ###
+                    # In the Gantt Chart section, modify the figure creation code:
+
                     if gantt_data:
                         gantt_df = pd.DataFrame(gantt_data)
                         
-                        # Calculate row spacing to prevent overlap
-                        gantt_df['SpacedRow'] = gantt_df.index * 2  # Double the row spacing
+                        # Calculate row spacing - use fixed spacing between rows (1 unit per row)
+                        gantt_df['SpacedRow'] = gantt_df.index * 1  # Simple row numbering
                         
                         # Create figure with improved layout
                         fig = px.timeline(
@@ -2953,8 +2956,8 @@ def workspace_page():
                             line=dict(color="red", width=2, dash="dot"),
                             name="Today"
                         )
-                        
-                        # Customize the layout
+
+                        # Customize the layout to fix bar heights and spacing
                         fig.update_layout(
                             yaxis=dict(
                                 tickmode='array',
@@ -2962,7 +2965,8 @@ def workspace_page():
                                 ticktext=gantt_df['Task'],
                                 autorange="reversed",
                                 showgrid=True,
-                                gridcolor="lightgray"
+                                gridcolor="lightgray",
+                                range=[-0.5, len(gantt_df) - 0.5]  # Set fixed y-axis range
                             ),
                             height=600 + len(gantt_df) * 25,  # Dynamic height based on number of items
                             xaxis=dict(
@@ -2975,7 +2979,13 @@ def workspace_page():
                             legend_title="Task Priority",
                             margin=dict(l=250, r=50, t=80, b=50),
                             plot_bgcolor="white",
-                            paper_bgcolor="white"
+                            paper_bgcolor="white",
+                            bargap=0.2  # Add gap between bars
+                        )
+                        
+                        # Set consistent bar height
+                        fig.update_traces(
+                            width=0.6  # Adjust bar thickness (0-1)
                         )
                         
                         # Customize hover template
@@ -3831,7 +3841,9 @@ def workspace_page():
                         "Actual End": actual_end_str,
                         "Actual Duration": actual_duration
                     })
-            
+ 
+                current_row += 1
+            #
             if gantt_data:
                 gantt_df = pd.DataFrame(gantt_data)
                 
