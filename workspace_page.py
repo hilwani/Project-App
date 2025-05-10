@@ -16,7 +16,7 @@ from visualizations import (
     plot_project_health,
     plot_plan_vs_actual_gantt, 
     plot_duration_variance, 
-    plot_duration_comparison 
+    plot_duration_comparison  
 )
 
  
@@ -1067,6 +1067,38 @@ def edit_task_in_workspace(task_id, project_id=None):
                     key=f"workspace_actual_cost_{task_id}"
                 )
 
+            # Add this AFTER your budget section but BEFORE the form actions
+            
+            with st.container(border=True):
+                st.markdown("**🔗 Task Dependencies**")
+                
+                # Get all tasks in this project (excluding current task)
+                available_tasks = query_db("""
+                    SELECT id, title FROM tasks 
+                    WHERE project_id = ? AND id != ?
+                    ORDER BY title
+                """, (project_id, task_id)) if project_id else []
+                
+                # Get current dependencies
+                current_dependencies = query_db("""
+                    SELECT depends_on_task_id FROM task_dependencies
+                    WHERE task_id = ?
+                """, (task_id,))
+                
+                current_depends_on = [d[0] for d in current_dependencies]
+                
+                dependency_options = {t[0]: t[1] for t in available_tasks}
+                
+                selected_dependencies = st.multiselect(
+                    "This task depends on completion of:",
+                    options=list(dependency_options.keys()),
+                    default=current_depends_on,
+                    format_func=lambda x: dependency_options[x],
+                    key=f"task_dependencies_{task_id}"
+                )
+
+
+
         # Notification Settings
         with st.container(border=True):
             st.markdown("**Notification Settings**")
@@ -1125,6 +1157,18 @@ def edit_task_in_workspace(task_id, project_id=None):
                 actual_deadline_str, budget, actual_cost,
                 budget_variance, actual_time, task_id
             ))
+
+            # ▼▼▼ DEPENDENCY UPDATE CODE ▼▼▼
+            # First clear existing dependencies
+            query_db("DELETE FROM task_dependencies WHERE task_id = ?", (task_id,))
+            
+            # Add new dependencies
+            for dep_id in selected_dependencies:
+                query_db("""
+                    INSERT INTO task_dependencies (task_id, depends_on_task_id)
+                    VALUES (?, ?)
+                """, (task_id, dep_id))
+            # ▲▲▲ END DEPENDENCY CODE ▲▲▲
             
             # Send notifications if enabled and assignee changed
             if send_notification and assignee_changed and new_assigned_to_id:
@@ -1797,6 +1841,27 @@ def render_task_form(edit_mode=False, project_id=None):
             # Change this line - use a separate variable for cancelled
             cancelled = st.form_submit_button("❌ Cancel", type="secondary")
 
+
+        # Task Dependencies
+        st.markdown("### 🔗 Task Dependencies")
+        
+        # Get all tasks in this project (for potential dependencies)
+        available_tasks = query_db("""
+            SELECT id, title FROM tasks 
+            WHERE project_id = ?
+            ORDER BY title
+        """, (project_id,)) if project_id else []
+        
+        dependency_options = {t[0]: t[1] for t in available_tasks}
+        
+        selected_dependencies = st.multiselect(
+            "This task depends on completion of:",
+            options=list(dependency_options.keys()),
+            format_func=lambda x: dependency_options[x],
+            key="task_dependencies"
+        )
+
+
         # Handle form submissions
         if submitted:
             if not new_title:
@@ -1841,6 +1906,24 @@ def render_task_form(edit_mode=False, project_id=None):
                             budget, planned_time, assigned_to
                         ))
                         
+                        # ▼▼▼ INSERT DEPENDENCY CODE RIGHT HERE ▼▼▼
+                        # Get the newly created task ID
+                        new_task = query_db(
+                            "SELECT id FROM tasks WHERE title=? AND project_id=? ORDER BY id DESC LIMIT 1",
+                            (new_title, project_id),
+                            one=True
+                        )
+                        
+                        if new_task:
+                            new_task_id = new_task[0]
+                            # Save dependencies
+                            for dep_id in selected_dependencies:
+                                query_db("""
+                                    INSERT INTO task_dependencies (task_id, depends_on_task_id)
+                                    VALUES (?, ?)
+                                """, (new_task_id, dep_id))
+                        # ▲▲▲ END OF NEW CODE ▲▲▲
+
                         # Debug print
                         print(f"New task created. Assigned to user ID: {assigned_to}")
                         
@@ -2772,6 +2855,15 @@ def workspace_page():
                         s.id
                 """, (selected_project_id,))
                 
+                # Get all task dependencies
+                dependencies = query_db("""
+                    SELECT task_id, depends_on_task_id 
+                    FROM task_dependencies
+                    WHERE task_id IN (
+                        SELECT id FROM tasks WHERE project_id = ?
+                    )
+                """, (selected_project_id,)) or []
+
                 if tasks_data or subtasks_data:
                     gantt_data = []
                     task_order = {}
@@ -2795,9 +2887,9 @@ def workspace_page():
                         except:
                             return "N/A"
                     
-                  
-                    # In the Gantt Chart data preparation
-                    # In the Gantt Chart data preparation
+                    # Create mapping between task IDs and their positions in the Gantt chart
+                    task_position_map = {}
+                    
                     for task in tasks_data:
                         # Update parent task status based on subtasks
                         if update_parent_task_status(task[0]):
@@ -2823,12 +2915,6 @@ def workspace_page():
                             """, (selected_project_id,))
                             break  # Break and restart processing with fresh data
 
-
-
-                        # Check and update parent task status first
-                        if task[4] != "Completed":  # Only check if not already completed
-                            update_parent_task_status(task[0])
-
                         task_id = task[0]
                         task_order[task_id] = current_row
                         current_row += 1
@@ -2838,6 +2924,13 @@ def workspace_page():
                         planned_end = pd.to_datetime(task[3]) if task[3] else None
                         actual_start = pd.to_datetime(task[7]) if task[7] else None
                         actual_end = pd.to_datetime(task[8]) if task[8] else None
+                        
+                        # Store task position for dependency arrows
+                        task_position_map[task_id] = {
+                            'row': current_row - 1,  # Adjust for 0-based index
+                            'start': planned_start if planned_start else pd.to_datetime('today'),
+                            'end': planned_end if planned_end else pd.to_datetime('today') + pd.Timedelta(days=1)
+                        }
                         
                         # Format dates for display
                         planned_start_str = format_date_or_na(planned_start)
@@ -2915,16 +3008,13 @@ def workspace_page():
                             })
                             current_row += 1
 
-                    ###
-                    # In the Gantt Chart section, modify the figure creation code:
-
                     if gantt_data:
                         gantt_df = pd.DataFrame(gantt_data)
                         
-                        # Calculate row spacing - use fixed spacing between rows (1 unit per row)
-                        gantt_df['SpacedRow'] = gantt_df.index * 1  # Simple row numbering
+                        # Calculate row spacing
+                        gantt_df['SpacedRow'] = gantt_df.index * 1
                         
-                        # Create figure with improved layout
+                        # Create the figure
                         fig = px.timeline(
                             gantt_df,
                             x_start="Start",
@@ -2945,6 +3035,34 @@ def workspace_page():
                             template="plotly_white"
                         )
                         
+                        # Add dependency arrows
+                        for dep in dependencies:
+                            successor_id, predecessor_id = dep
+                            
+                            # Only proceed if both tasks exist in our data
+                            if predecessor_id in task_position_map and successor_id in task_position_map:
+                                pred_data = task_position_map[predecessor_id]
+                                succ_data = task_position_map[successor_id]
+                                
+                                # Add arrow annotation
+                                fig.add_annotation(
+                                    x=pred_data['end'],
+                                    y=pred_data['row'],
+                                    ax=succ_data['start'],
+                                    ay=succ_data['row'],
+                                    xref="x",
+                                    yref="y",
+                                    axref="x",
+                                    ayref="y",
+                                    showarrow=True,
+                                    arrowhead=3,
+                                    arrowsize=1.5,
+                                    arrowwidth=2,
+                                    arrowcolor="#FF5733",
+                                    standoff=10,
+                                    startstandoff=10
+                                )
+                        
                         # Add today's line
                         today = pd.Timestamp.now().normalize()
                         fig.add_shape(
@@ -2957,7 +3075,7 @@ def workspace_page():
                             name="Today"
                         )
 
-                        # Customize the layout to fix bar heights and spacing
+                        # Customize the layout
                         fig.update_layout(
                             yaxis=dict(
                                 tickmode='array',
@@ -2966,9 +3084,9 @@ def workspace_page():
                                 autorange="reversed",
                                 showgrid=True,
                                 gridcolor="lightgray",
-                                range=[-0.5, len(gantt_df) - 0.5]  # Set fixed y-axis range
+                                range=[-0.5, len(gantt_df) - 0.5]
                             ),
-                            height=600 + len(gantt_df) * 25,  # Dynamic height based on number of items
+                            height=600 + len(gantt_df) * 25,
                             xaxis=dict(
                                 title="Timeline",
                                 showgrid=True,
@@ -2980,7 +3098,7 @@ def workspace_page():
                             margin=dict(l=250, r=50, t=80, b=50),
                             plot_bgcolor="white",
                             paper_bgcolor="white",
-                            bargap=0.2  # Add gap between bars
+                            bargap=0.2
                         )
                         
                         # Set consistent bar height
@@ -3022,8 +3140,6 @@ def workspace_page():
                         
                         st.plotly_chart(fig, use_container_width=True)
 
-
-                        
                         # Add legend explanation
                         with st.expander("Chart Legend", expanded=True):
                             st.markdown("""
@@ -3033,8 +3149,11 @@ def workspace_page():
                                 - <span style='color:#FF6B6B;'>Red</span> - High priority
                                 - <span style='color:#FFD166;'>Yellow</span> - Medium priority
                                 - <span style='color:#06D6A0;'>Green</span> - Low priority
+                            - **Red arrows** - Task dependencies (task A must complete before task B can start)
                             - **Dotted red line** - Today's date
                             """, unsafe_allow_html=True)
+                    else:
+                        st.info("No tasks found for this project")
             
            
                         
@@ -3147,8 +3266,8 @@ def workspace_page():
                             )
                         else:
                             st.info("No subtasks found for analytics")
-                    else:
-                        st.info("No tasks found for this project")
+                else:
+                     st.info("No tasks found for this project")
 
 
 
