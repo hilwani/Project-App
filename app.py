@@ -4033,7 +4033,7 @@ else:
                         title=f"Gantt Chart for {name}"
                     )
                     fig.update_yaxes(autorange="reversed")  # Show tasks in order
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True) 
     
 
  
@@ -4042,7 +4042,6 @@ else:
     if page == "Dashboard":
         st.markdown("---")
       
-
         # Custom CSS for enhanced styling
         st.markdown("""
         <style>
@@ -4055,9 +4054,57 @@ else:
                 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             }
             
+            .dashboard-metric-card {
+                background: white;
+                border-radius: 10px;
+                padding: 1.5rem;
+                margin-bottom: 1.5rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                transition: transform 0.2s ease, box-shadow 0.2s ease;
+                border-left: 5px solid;
+                cursor: pointer;
+            }
+            
+            .dashboard-metric-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+            }
+            
+            .metric-title {
+                display: flex;
+                align-items: center;
+                margin-bottom: 1rem;
+                font-size: 1rem;
+                color: #555;
+            }
+            
+            .metric-icon {
+                font-size: 1.5rem;
+                margin-right: 0.75rem;
+            }
+            
+            .metric-name {
+                font-weight: 600;
+            }
+            
+            .metric-value {
+                font-size: 2rem;
+                font-weight: 700;
+                margin: 0;
+                color: #333;
+            }
+            
+            @media (max-width: 768px) {
+                .dashboard-metric-card {
+                    margin-bottom: 1rem;
+                }
+                
+                .metric-value {
+                    font-size: 1.75rem;
+                }
+            }
         </style>
         """, unsafe_allow_html=True)
-
 
         # Header Section with Gradient
         st.markdown("""
@@ -4071,8 +4118,6 @@ else:
         st.markdown("---")
         st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)  
 
-       
-        # ======= Project Summary Statistics =======
         # ======= Project Summary Statistics =======
         st.subheader("📊 Project Overview")
 
@@ -4099,13 +4144,13 @@ else:
             )
         """))
 
-        # Update the columns from 3 to 4
-        cols = st.columns(4)  # Changed from 3 to 4 columns
+        # Create columns with gaps between them
+        cols = st.columns(4, gap="large")  # Added gap between columns
 
-        # Existing cards (just showing the new one added)
+        # Project cards with improved styling
         with cols[0]:
             st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #4E8BF5;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+            <div class="dashboard-metric-card" style="border-left-color: #4E8BF5;">
                 <div class="metric-title"> 
                     <span class="metric-icon">📂</span>
                     <span class="metric-name">Total Projects</span>
@@ -4114,12 +4159,9 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
-
-
-
         with cols[1]:
             st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #32CD32;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+            <div class="dashboard-metric-card" style="border-left-color: #32CD32;">
                 <div class="metric-title"> 
                     <span class="metric-icon">🟢</span>
                     <span class="metric-name">Active Projects</span>
@@ -4130,7 +4172,7 @@ else:
 
         with cols[2]:
             st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #FF4500;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+            <div class="dashboard-metric-card" style="border-left-color: #FF4500;">
                 <div class="metric-title"> 
                     <span class="metric-icon">⚠️</span>
                     <span class="metric-name">Overdue Projects</span>
@@ -4139,11 +4181,9 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
-
-        # Add the new Completed Projects card
         with cols[3]:  
             st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #32CD32;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Projects'}}}}, '*')">
+            <div class="dashboard-metric-card" style="border-left-color: #9d50bb;">
                 <div class="metric-title"> 
                     <span class="metric-icon">✅</span>
                     <span class="metric-name">Completed Projects</span>
@@ -4152,39 +4192,37 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
-
-
         # Divider with spacing
-        # ======= Task Summary Statistics =======
-        # ======= Task Summary Statistics =======
         st.markdown("---")
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+
+        # ======= Task Summary Statistics =======
         st.subheader("✅ Task Overview")
 
-        # Remove the admin restriction from these queries - let all users see all tasks
+        # Calculate task metrics
         total_tasks = query_db("SELECT COUNT(*) FROM tasks")[0][0]
         overdue_tasks_count = query_db("""
             SELECT COUNT(*) FROM tasks 
             WHERE status != 'Completed' AND deadline < DATE('now')
         """)[0][0]
-
         upcoming_tasks_count = query_db("""
             SELECT COUNT(*) FROM tasks 
             WHERE status != 'Completed' 
             AND deadline BETWEEN DATE('now') AND DATE('now', '+' || ? || ' days')
         """, (st.session_state.reminder_period,))[0][0]
-
         completed_tasks_count = query_db("""
             SELECT COUNT(*) FROM tasks 
             WHERE status = 'Completed'
         """)[0][0]
 
-        # Create task metric cards with clickable functionality
-        cols = st.columns(4)
+        # Create task metric cards with improved styling
+        cols = st.columns(4, gap="large")  # Added gap between columns
+        
         with cols[0]:
             st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #4E8BF5;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
+            <div class="dashboard-metric-card" style="border-left-color: #4E8BF5;">
                 <div class="metric-title">
-                    <span class="metric-icon">✅</span>
+                    <span class="metric-icon">📝</span>
                     <span class="metric-name">Total Tasks</span>
                 </div>
                 <p class="metric-value">{total_tasks}</p>
@@ -4193,7 +4231,7 @@ else:
 
         with cols[1]:
             st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #FF4500;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
+            <div class="dashboard-metric-card" style="border-left-color: #FF4500;">
                 <div class="metric-title">
                     <span class="metric-icon">⚠️</span>
                     <span class="metric-name">Overdue Tasks</span>
@@ -4204,12 +4242,23 @@ else:
 
         with cols[2]:
             st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #FFA500;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
+            <div class="dashboard-metric-card" style="border-left-color: #FFA500;">
                 <div class="metric-title">
                     <span class="metric-icon">🔜</span>
                     <span class="metric-name">Upcoming Tasks</span>
                 </div>
                 <p class="metric-value">{upcoming_tasks_count}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with cols[3]:                                                                                                                                                                                                   
+            st.markdown(f"""
+            <div class="dashboard-metric-card" style="border-left-color: #4CAF50;">
+                <div class="metric-title">
+                    <span class="metric-icon">✔️</span>
+                    <span class="metric-name">Completed Tasks</span>
+                </div>
+                <p class="metric-value">{completed_tasks_count}</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -4245,19 +4294,6 @@ else:
             });
         </script>
         """, height=0)
-
-
-        # Add the new Completed Tasks card
-        with cols[3]:                                                                                                                                                                                                   
-            st.markdown(f"""
-            <div class="dashboard-metric-card" style="border-left-color: #4CAF50;" onclick="window.parent.postMessage({{'streamlit:setComponentValue': {{'page': 'Tasks'}}}}, '*')">
-                <div class="metric-title">
-                    <span class="metric-icon">✔️</span>
-                    <span class="metric-name">Completed Tasks</span>
-                </div>
-                <p class="metric-value">{completed_tasks_count}</p>
-            </div>
-            """, unsafe_allow_html=True)
 
 
 
