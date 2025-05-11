@@ -3035,21 +3035,48 @@ def workspace_page():
                             template="plotly_white"
                         )
                         
-                        # Add dependency arrows
+
+                        # Add L-shaped dependency arrows
                         for dep in dependencies:
                             successor_id, predecessor_id = dep
                             
-                            # Only proceed if both tasks exist in our data
                             if predecessor_id in task_position_map and successor_id in task_position_map:
                                 pred_data = task_position_map[predecessor_id]
                                 succ_data = task_position_map[successor_id]
                                 
-                                # Add arrow annotation
+                                # Get task positions
+                                x_start = pred_data['end']  # End of predecessor task
+                                y_start = pred_data['row']
+                                x_end = succ_data['start']  # Start of successor task
+                                y_end = succ_data['row']
+                                
+                                # Calculate midpoint for L-shape corner
+                                mid_x = x_start + (x_end - x_start)/2
+                                
+                                # Add the horizontal part of the L (from predecessor to midpoint)
+                                fig.add_shape(
+                                    type="line",
+                                    x0=x_start, y0=y_start,
+                                    x1=mid_x, y1=y_start,
+                                    line=dict(color="#202121 ", width=2),
+                                    layer='above'
+                                )
+                                
+                                # Add the vertical part of the L (from midpoint to successor)
+                                fig.add_shape(
+                                    type="line",
+                                    x0=mid_x, y0=y_start,
+                                    x1=mid_x, y1=y_end,
+                                    line=dict(color="#202121 ", width=2),
+                                    layer='above'
+                                )
+                                
+                                # Add arrowhead at the end
                                 fig.add_annotation(
-                                    x=pred_data['end'],
-                                    y=pred_data['row'],
-                                    ax=succ_data['start'],
-                                    ay=succ_data['row'],
+                                    x=x_end,
+                                    y=y_end,
+                                    ax=mid_x,  # Points from the vertical line
+                                    ay=y_end,
                                     xref="x",
                                     yref="y",
                                     axref="x",
@@ -3058,11 +3085,9 @@ def workspace_page():
                                     arrowhead=3,
                                     arrowsize=1.5,
                                     arrowwidth=2,
-                                    arrowcolor="#FF5733",
-                                    standoff=10,
-                                    startstandoff=10
+                                    arrowcolor="#202121 "
                                 )
-                        
+
                         # Add today's line
                         today = pd.Timestamp.now().normalize()
                         fig.add_shape(
@@ -3149,7 +3174,7 @@ def workspace_page():
                                 - <span style='color:#FF6B6B;'>Red</span> - High priority
                                 - <span style='color:#FFD166;'>Yellow</span> - Medium priority
                                 - <span style='color:#06D6A0;'>Green</span> - Low priority
-                            - **Red arrows** - Task dependencies (task A must complete before task B can start)
+                            - **Black arrows** - Task dependencies (task A must complete before task B can start)
                             - **Dotted red line** - Today's date
                             """, unsafe_allow_html=True)
                     else:
