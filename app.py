@@ -19,7 +19,7 @@ import base64
 import plotly.graph_objects as go 
 from visualizations import ( 
     plot_project_timeline, 
-    plot_budget_comparison, 
+    plot_budget_comparison,  
     plot_completion_heatmap, 
     plot_duration_variance,
     plot_project_health,
