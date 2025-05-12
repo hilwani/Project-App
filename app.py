@@ -29,6 +29,20 @@ from visualizations import (
 )
 
 import streamlit as st
+import smtplib
+from email.message import EmailMessage
+
+# Load secrets
+EMAIL_HOST = st.secrets["email"]["host"]
+EMAIL_PORT = st.secrets["email"]["port"]
+EMAIL_USER = st.secrets["email"]["username"]
+EMAIL_PASS = st.secrets["email"]["password"]
+
+
+
+
+
+import streamlit as st
 st.set_page_config(
     page_title="Project Management App",
     page_icon="📊",
