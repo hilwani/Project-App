@@ -1,3 +1,20 @@
+import streamlit as st
+
+# Initialize session keys
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# Import and show login screen if not authenticated
+if not st.session_state.authenticated:
+    from login import login_screen
+    login_screen()
+    st.stop()
+
+
+
+
+
+
 import streamlit as st 
 import sqlite3 
 import datetime 
@@ -1559,12 +1576,16 @@ if st.session_state.authenticated:
                 ):
                     st.session_state.show_logout_confirmation = True
                     st.rerun()
+
             else:
+                # Optional styled message
                 st.sidebar.markdown("""
-                <div class="logout-confirmation-container">
-                    <p style="text-align: center; margin-bottom: 12px;">Are you sure you want to logout?</p>
+                <div style="background-color: #fff8e1; padding: 10px; border-radius: 8px; margin-top: 10px;">
+                    ⚠️ <strong>Are you sure you want to logout?</strong>
                 </div>
                 """, unsafe_allow_html=True)
+
+                st.sidebar.markdown("---")  # Separator 
                 
                 if st.sidebar.button(
                     "✅ Confirm Logout", 
