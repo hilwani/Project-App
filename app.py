@@ -12,14 +12,14 @@ from streamlit_calendar import calendar
 from calendar_page import show_calendar_page
 # from workspace_page import workspace_page
 import io  # For handling in-memory file buffers
-import logging
+import logging 
 import streamlit.components.v1 as components
 import json
 import base64
 import plotly.graph_objects as go 
 from visualizations import ( 
     plot_project_timeline, 
-    plot_budget_comparison, 
+    plot_budget_comparison,  
     plot_completion_heatmap, 
     plot_duration_variance,
     plot_project_health,

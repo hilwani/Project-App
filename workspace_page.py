@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st 
 import sqlite3 
-import time
+import time 
 import smtplib 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart 
@@ -89,35 +89,50 @@ def render_project_form():
         
         description = st.text_area("Description", value=default_values['description'], height=100)
         
+
+
+        # Start and End Dates on same row with unique keys
+        date_col1, date_col2 = st.columns(2)
+        with date_col1:
+            start_date = st.date_input(
+                "Start Date*",
+                value=default_values['start_date'] or datetime.now().date(),
+                key="project_start_date_input"
+            )
+        
+        with date_col2:
+            end_date = st.date_input(
+                "End Date*",
+                value=default_values['end_date'] or (datetime.now().date() + timedelta(days=30)),
+                key="project_end_date_input"
+            )
+        
+
+
+
         col1, col2 = st.columns(2)
         with col1:
             status = st.selectbox(
                 "Status*",
-                options=["Planning", "Active", "On Hold", "Completed", "Cancelled"],
-                index=["Planning", "Active", "On Hold", "Completed", "Cancelled"].index(
-                    default_values['status'] if default_values['status'] in ["Planning", "Active", "On Hold", "Completed", "Cancelled"] 
+                options=["Planning", "In Progress", "On Hold", "Completed", "Cancelled"],
+                index=["Planning", "In Progress", "On Hold", "Completed", "Cancelled"].index(
+                    default_values['status'] if default_values['status'] in ["Planning", "In Progress", "On Hold", "Completed", "Cancelled"] 
                     else "Planning"
                 )
             )
             
-            start_date = st.date_input(
-                "Start Date*",
-                value=default_values['start_date'] or datetime.now().date()
-            )
-        
+     
         with col2:
-            end_date = st.date_input(
-                "End Date*",
-                value=default_values['end_date'] or (datetime.now().date() + timedelta(days=30))
-            )
-            
             budget = st.number_input(
-                "Budget ($)",
-                min_value=0.0,
-                value=default_values['budget'] if default_values['budget'] is not None else 0.0,
-                step=100.0,
-                format="%.2f"
+            "Budget ($)",
+            min_value=0.0,
+            value=default_values['budget'] if default_values['budget'] is not None else 0.0,
+            step=100.0,
+            format="%.2f"
             )
+       
+       
+ 
         
         # Manager selection - FIXED ISSUE WITH FORM CLOSING
         # Manager selection section - UPDATED TO USE DROPDOWN IN BOTH CREATE AND EDIT MODES
