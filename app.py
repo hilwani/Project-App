@@ -15,7 +15,7 @@ import io  # For handling in-memory file buffers
 import logging 
 import streamlit.components.v1 as components
 import json
-import base64
+import base64 
 import plotly.graph_objects as go 
 from visualizations import ( 
     plot_project_timeline, 
