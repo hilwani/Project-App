@@ -30,7 +30,7 @@ from visualizations import (
 
 import streamlit as st
 
-email_user = st.secrets["email"]["user"]
+email_user = st.secrets["email"]["username"]
 email_pass = st.secrets["email"]["password"]
 
 
