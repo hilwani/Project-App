@@ -28,12 +28,6 @@ from visualizations import (
     plot_duration_comparison 
 )
 
-# import streamlit as st
-
-# email_user = st.secrets["email"]["username"]
-# email_pass = st.secrets["email"]["password"]
-
-
 import streamlit as st
 st.set_page_config(
     page_title="Project Management App",
@@ -6122,9 +6116,7 @@ else:
                 margin-bottom: 2rem;
                 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             }
-                    
-                    
-
+            
         </style>
         """, unsafe_allow_html=True)
 
@@ -6165,11 +6157,8 @@ else:
             {"title": "Admins", "value": admins, "color": "#FF4500", "icon": "👥"}
         ]
 
-        
-        # cols = st.columns(4, gap="large")  # Added gap between columns
-        
         # Display metrics in columns with consistent styling
-        cols = st.columns(4, gap="large")
+        cols = st.columns(4)
         for i, card in enumerate(metric_cards):
             with cols[i]:
                 st.markdown(f"""
@@ -6180,14 +6169,12 @@ else:
                     border-left: 4px solid {card['color']};
                     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
                     height: 100%;
-                    @media (max-width: 768px);
                 '>
                     <div style='display: flex; align-items: center; margin-bottom: 8px;'>
                         <span style='font-size: 1.5rem; margin-right: 8px;'>{card['icon']}</span>
                         <span style='font-size: 0.9rem; color: #666;'>{card['title']}</span>
                     </div>
                     <p style='font-size: 1.8rem; font-weight: 700; color: #2c3e50; margin: 0;'>{card['value']}</p>
-                    
                 </div>
                 """, unsafe_allow_html=True)
 
