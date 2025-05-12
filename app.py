@@ -29,6 +29,12 @@ from visualizations import (
 )
 
 import streamlit as st
+
+email_user = st.secrets["email"]["username"]
+email_pass = st.secrets["email"]["password"]
+
+
+import streamlit as st
 st.set_page_config(
     page_title="Project Management App",
     page_icon="📊",
