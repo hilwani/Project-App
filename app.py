@@ -29,14 +29,8 @@ from visualizations import (
 )
 
 import streamlit as st
-import smtplib
-from email.message import EmailMessage
-
-# Load secrets
-EMAIL_HOST = st.secrets["email"]["host"]
-EMAIL_PORT = st.secrets["email"]["port"]
-EMAIL_USER = st.secrets["email"]["username"]
-EMAIL_PASS = st.secrets["email"]["password"]
+email_user = st.secrets["email"]["username"]
+email_pass = st.secrets["email"]["password"]
 
 
 
