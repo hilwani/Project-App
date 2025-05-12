@@ -28,10 +28,10 @@ from visualizations import (
     plot_duration_comparison 
 )
 
-import streamlit as st
+# import streamlit as st
 
-email_user = st.secrets["email"]["username"]
-email_pass = st.secrets["email"]["password"]
+# email_user = st.secrets["email"]["username"]
+# email_pass = st.secrets["email"]["password"]
 
 
 import streamlit as st
