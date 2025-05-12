@@ -45,6 +45,8 @@ from visualizations import (
     plot_duration_comparison 
 )
 
+
+
 import streamlit as st
 st.set_page_config(
     page_title="Project Management App",
