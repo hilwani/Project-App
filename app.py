@@ -12,9 +12,6 @@ if not st.session_state.authenticated:
 
 
 
-
-
-
 import streamlit as st 
 import sqlite3 
 import datetime 
@@ -44,6 +41,11 @@ from visualizations import (
     plot_duration_variance, 
     plot_duration_comparison 
 )
+
+# import smtplib
+# from email.mime.text import MIMEText
+email_user = st.secrets["email"]["user"]
+email_pass = st.secrets["email"]["password"]
 
 
 
@@ -2196,10 +2198,6 @@ def display_project_analytics_table(projects_data):
 
 
 
-
-
-
-
 # Helper function to get tasks
 def get_tasks(project_id=None):
     """Fetch only tasks where current user is assignee"""
@@ -2678,7 +2676,7 @@ else:
     update_breadcrumbs(page)
     display_breadcrumbs()
     
-
+    
     # Helper Functions
     def get_projects():
         if st.session_state.user_role == "Admin":
@@ -2755,7 +2753,7 @@ else:
         
 
 
-   
+    
     
     # Helper function for task status distribution (Pie Chart)
     def plot_task_status_distribution(tasks_df):

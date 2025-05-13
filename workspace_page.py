@@ -481,12 +481,6 @@ def send_subtask_reassignment_email(new_assignee_email, previous_assignee_email,
     Send email notification about subtask reassignment.
     """
     try:
-        # # Email configuration - REPLACE WITH YOUR ACTUAL CREDENTIALS
-        # SMTP_SERVER = "smtp.gmail.com"
-        # SMTP_PORT = 587
-        # SMTP_USERNAME = "your_email@gmail.com"
-        # SMTP_PASSWORD = "your_app_password"
-        # SENDER_EMAIL = "your_email@gmail.com"
 
 
         # Email Configuration (using Streamlit secrets)
@@ -533,12 +527,6 @@ def send_subtask_reassignment_email(new_assignee_email, previous_assignee_email,
         
         msg.attach(MIMEText(body, 'html'))
         
-        # # Send email
-        # with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        #     server.starttls()
-        #     server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        #     server.send_message(msg)
-
 
 
         # Send email
@@ -565,12 +553,7 @@ def send_task_reassignment_email(new_assignee_email, previous_assignee_email, ta
     Send email notification about task reassignment.
     """
     try:
-        # # Email configuration - REPLACE WITH YOUR ACTUAL CREDENTIALS
-        # SMTP_SERVER = "smtp.gmail.com"
-        # SMTP_PORT = 587
-        # SMTP_USERNAME = "your_email@gmail.com"
-        # SMTP_PASSWORD = "your_app_password"
-        # SENDER_EMAIL = "your_email@gmail.com"
+
 
         # Email Configuration (using Streamlit secrets)
         SMTP_SERVER = st.secrets.get("email", {}).get("server", "smtp.gmail.com")
@@ -618,12 +601,6 @@ def send_task_reassignment_email(new_assignee_email, previous_assignee_email, ta
         
         msg.attach(MIMEText(body, 'html'))
         
-        # # Send email
-        # with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        #     server.starttls()
-        #     server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        #     server.send_message(msg)
-
 
         # Send email
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
