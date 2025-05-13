@@ -1,3 +1,20 @@
+import streamlit as st
+
+# Initialize session keys
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# Import and show login screen if not authenticated
+if not st.session_state.authenticated:
+    from login import login_screen
+    login_screen()
+    st.stop()
+
+
+
+
+
+
 import streamlit as st 
 import sqlite3 
 import datetime 
@@ -12,7 +29,7 @@ from streamlit_calendar import calendar
 from calendar_page import show_calendar_page
 # from workspace_page import workspace_page
 import io  # For handling in-memory file buffers
-import logging
+import logging 
 import streamlit.components.v1 as components
 import json
 import base64 
@@ -675,6 +692,44 @@ def query_db(query, args=(), one=False):
 
 # Initialize the database
 init_db()
+
+
+
+
+def logout_button():
+    """Displays a logout button with confirmation prompt in the sidebar."""
+    if "show_logout_confirmation" not in st.session_state:
+        st.session_state.show_logout_confirmation = False
+
+    if not st.session_state.show_logout_confirmation:
+        if st.sidebar.button("🚪 Logout", key="logout_button", use_container_width=True):
+            st.session_state.show_logout_confirmation = True
+            st.rerun()
+    else:
+        # Styled message
+        st.sidebar.markdown("""
+        <div style="background-color: #fff8e1; padding: 10px; border-radius: 8px; margin-top: 10px;">
+            ⚠️ <strong>Are you sure you want to logout?</strong>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.sidebar.markdown("---")  # Separator 
+
+        # Vertically stacked buttons to prevent overlap
+        confirm = st.sidebar.button("✅ Confirm Logout", key="logout_confirm", use_container_width=True)
+        cancel = st.sidebar.button("❌ Cancel", key="logout_cancel", use_container_width=True)
+
+        if confirm:
+            for key in ["authenticated", "user_id", "user_role", "show_logout_confirmation"]:
+                st.session_state.pop(key, None)
+            st.rerun()
+
+        if cancel:
+            st.session_state.show_logout_confirmation = False
+            st.rerun()
+
+
+
 
 
 
@@ -1549,46 +1604,8 @@ if st.session_state.authenticated:
 
 
         # Logout Section - placed at the bottom of your sidebar code
-        if st.session_state.authenticated:
-            # Remove separators and adjust spacing by placing this at the very end of sidebar content
-            if not st.session_state.show_logout_confirmation:
-                if st.sidebar.button(
-                    "🚪 Logout",
-                    key="logout_button",
-                    use_container_width=True
-                ):
-                    st.session_state.show_logout_confirmation = True
-                    st.rerun()
-            else:
-                st.sidebar.markdown("""
-                <div class="logout-confirmation-container">
-                    <p style="text-align: center; margin-bottom: 12px;">Are you sure you want to logout?</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if st.sidebar.button(
-                    "✅ Confirm Logout", 
-                    key="logout_confirm", 
-                    type="primary",
-                    use_container_width=True
-                ):
-                    # Clear session state
-                    st.session_state.authenticated = False
-                    st.session_state.user_id = None
-                    st.session_state.user_role = None
-                    st.session_state.breadcrumbs = []
-                    st.session_state.page = "Dashboard"
-                    st.session_state.show_help = False
-                    st.session_state.show_logout_confirmation = False
-                    st.rerun()
-                
-                if st.sidebar.button(
-                    "❌ Cancel", 
-                    key="logout_cancel",
-                    use_container_width=True
-                ):
-                    st.session_state.show_logout_confirmation = False
-                    st.rerun()
+        logout_button()
+
 
     st.sidebar.markdown("---")  # Separator after logout
 
