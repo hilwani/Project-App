@@ -42,7 +42,7 @@ def register_user(username, password):
 def login_screen():
     st.set_page_config(page_title="Login - Project App", layout="centered")
     
-    # Logo and title side by side with tighter spacing
+    # Logo and title side by side
     try:
         logo = Image.open('logo.png')
         st.markdown(f"""
@@ -51,8 +51,8 @@ def login_screen():
             flex-direction: row;
             align-items: center;
             justify-content: center;
-            gap: 15px;
-            margin: 10px 0 5px 0;  
+            gap: 20px;
+            margin: 20px 0;
         ">
             <img src="data:image/png;base64,{base64.b64encode(open('logo.png', "rb").read()).decode("utf-8")}" 
                 width="80" 
@@ -68,14 +68,14 @@ def login_screen():
         st.divider()
     except:
         st.markdown("""
-        <div style="text-align: center; margin: 15px 0 5px 0;">
+        <div style="text-align: center; margin: 30px 0;">
             <h1>🏢 Project Management App</h1>
         </div>
         """, unsafe_allow_html=True)
 
-    # Centered login title with reduced spacing
+    # Centered login title below the logo+title row
     st.markdown("""
-    <div style="text-align: center; margin: 5px 0 15px 0;">  
+    <div style="text-align: center; margin: 20px 0 30px 0;">
         <h2>🔐 Account Login</h2>
     </div>
     """, unsafe_allow_html=True)

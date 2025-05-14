@@ -4220,7 +4220,7 @@ else:
         # ======= Task Summary Statistics =======
         st.subheader("✅ Task Overview")
 
-        # Calculate task metrics 
+        # Calculate task metrics
         total_tasks = query_db("SELECT COUNT(*) FROM tasks")[0][0]
         overdue_tasks_count = query_db("""
             SELECT COUNT(*) FROM tasks 
@@ -6138,6 +6138,55 @@ else:
                 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             }
             
+            .dashboard-metric-card {
+                background: white;
+                border-radius: 10px;
+                padding: 1.5rem;
+                margin-bottom: 1.5rem;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                transition: transform 0.2s ease, box-shadow 0.2s ease;
+                border-left: 5px solid;
+                cursor: pointer;
+            }
+            
+            .dashboard-metric-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+            }
+            
+            .metric-title {
+                display: flex;
+                align-items: center;
+                margin-bottom: 1rem;
+                font-size: 1rem;
+                color: #555;
+            }
+            
+            .metric-icon {
+                font-size: 1.5rem;
+                margin-right: 0.75rem;
+            }
+            
+            .metric-name {
+                font-weight: 600;
+            }
+            
+            .metric-value {
+                font-size: 2rem;
+                font-weight: 700;
+                margin: 0;
+                color: #333;
+            }
+            
+            @media (max-width: 768px) {
+                .dashboard-metric-card {
+                    margin-bottom: 1rem;
+                }
+                
+                .metric-value {
+                    font-size: 1.75rem;
+                }
+            }
         </style>
         """, unsafe_allow_html=True)
 
@@ -6149,8 +6198,6 @@ else:
             <p style="font-size: 1.1rem; opacity: 0.9;"></p>
         </div>
         """, unsafe_allow_html=True)
-
-
 
         
         # Initialize the database to ensure schema is up-to-date
@@ -6178,26 +6225,18 @@ else:
             {"title": "Admins", "value": admins, "color": "#FF4500", "icon": "👥"}
         ]
 
-
-
-        # Display metrics in columns with consistent styling 
-        cols = st.columns(4)
+        # Display metrics in columns with consistent styling and proper gap
+        cols = st.columns(4, gap="large")  # Added gap between columns
+        
         for i, card in enumerate(metric_cards):
             with cols[i]:
                 st.markdown(f"""
-                <div style='
-                    background-color: #FFFFFF;
-                    border-radius: 10px;
-                    padding: 1.2rem;
-                    border-left: 4px solid {card['color']};
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                    height: 100%;
-                '>
-                    <div style='display: flex; align-items: center; margin-bottom: 8px;'>
-                        <span style='font-size: 1.5rem; margin-right: 8px;'>{card['icon']}</span>
-                        <span style='font-size: 0.9rem; color: #666;'>{card['title']}</span>
+                <div class="dashboard-metric-card" style="border-left-color: {card['color']}">
+                    <div class="metric-title"> 
+                        <span class="metric-icon">{card['icon']}</span>
+                        <span class="metric-name">{card['title']}</span>
                     </div>
-                    <p style='font-size: 1.8rem; font-weight: 700; color: #2c3e50; margin: 0;'>{card['value']}</p>
+                    <p class="metric-value">{card['value']}</p>
                 </div>
                 """, unsafe_allow_html=True)
 
